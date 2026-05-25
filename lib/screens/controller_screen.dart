@@ -186,10 +186,9 @@ class _ControllerScreenState extends State<ControllerScreen>
           body: SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final buttonSize = ((constraints.maxHeight - 72) / 2).clamp(
-                  96.0,
-                  154.0,
-                );
+                final buttonSize = ((constraints.maxHeight - 72) / 2)
+                    .clamp(96.0, 154.0)
+                    .toDouble();
 
                 return Padding(
                   padding: const EdgeInsets.all(18),

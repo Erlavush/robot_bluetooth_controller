@@ -4,12 +4,13 @@ import 'package:robot_bluetooth_controller/main.dart';
 import 'package:robot_bluetooth_controller/services/bluetooth_service.dart';
 
 void main() {
-  testWidgets('shows robot controller title', (tester) async {
+  testWidgets('shows manual robot controller controls', (tester) async {
     await tester.pumpWidget(
       RobotControllerApp(bluetoothService: RobotBluetoothService()),
     );
 
-    expect(find.text('Robot Controller'), findsOneWidget);
-    expect(find.byIcon(Icons.settings), findsOneWidget);
+    expect(find.text('Traversal Mode'), findsOneWidget);
+    expect(find.text('HC-05'), findsOneWidget);
+    expect(find.byIcon(Icons.bluetooth), findsOneWidget);
   });
 }

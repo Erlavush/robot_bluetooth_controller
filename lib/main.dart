@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'screens/controller_screen.dart';
+import 'screens/manual_control_screen.dart';
 import 'services/bluetooth_service.dart';
 
 Future<void> main() async {
@@ -11,6 +11,7 @@ Future<void> main() async {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+  await _enterFullscreen();
 
   final bluetoothService = RobotBluetoothService();
   await bluetoothService.initialize();
@@ -18,37 +19,84 @@ Future<void> main() async {
   runApp(RobotControllerApp(bluetoothService: bluetoothService));
 }
 
-class RobotControllerApp extends StatelessWidget {
+class RobotControllerApp extends StatefulWidget {
   const RobotControllerApp({super.key, required this.bluetoothService});
 
   final RobotBluetoothService bluetoothService;
 
   @override
-  Widget build(BuildContext context) {
-    const background = Color(0xFF101318);
-    const surface = Color(0xFF191F27);
-    const accent = Color(0xFF33D2B2);
+  State<RobotControllerApp> createState() => _RobotControllerAppState();
+}
 
+class _RobotControllerAppState extends State<RobotControllerApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    widget.bluetoothService.sendSafetyStop();
+    widget.bluetoothService.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _enterFullscreen();
+    }
+
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      widget.bluetoothService.sendSafetyStop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Robot Controller',
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: 'Quicksand',
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: background,
+        scaffoldBackgroundColor: Colors.black,
         colorScheme: const ColorScheme.dark(
-          primary: accent,
-          secondary: Color(0xFFFFC857),
-          tertiary: Color(0xFFFF5C7A),
-          surface: surface,
+          primary: Color(0xFF10C772),
+          secondary: Color(0xFFFFE066),
+          tertiary: Color(0xFFFF3131),
+          surface: Color(0xFF0C0C0E),
         ),
-        textTheme: const TextTheme(
-          headlineMedium: TextStyle(fontWeight: FontWeight.w800),
-          titleLarge: TextStyle(fontWeight: FontWeight.w700),
-          bodyMedium: TextStyle(color: Color(0xFFD8DEE9)),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.white,
+          contentTextStyle: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w900,
+          ),
         ),
       ),
-      home: ControllerScreen(bluetoothService: bluetoothService),
+      home: ManualControlScreen(bluetoothService: widget.bluetoothService),
     );
   }
+}
+
+Future<void> _enterFullscreen() async {
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
 }

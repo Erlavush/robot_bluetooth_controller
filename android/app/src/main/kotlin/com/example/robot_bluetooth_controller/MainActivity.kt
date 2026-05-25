@@ -8,21 +8,53 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
+import java.lang.StringBuilder
 import java.util.UUID
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private val channelName = "robot_bluetooth_controller/classic_bluetooth"
+    private val eventsChannelName = "robot_bluetooth_controller/classic_bluetooth_events"
     private val sppUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
     @Volatile
     private var socket: BluetoothSocket? = null
+    private var input: InputStream? = null
     private var output: OutputStream? = null
+    private val writeLock = Any()
+
+    @Volatile
+    private var eventSink: EventChannel.EventSink? = null
+
+    @Volatile
+    private var readerRunning = false
+    private var readerThread: Thread? = null
+
+    @Volatile
+    private var bytesRead: Long = 0
+
+    @Volatile
+    private var linesRead: Long = 0
+
+    @Volatile
+    private var droppedLines: Long = 0
+
+    @Volatile
+    private var lastLine: String = ""
+
+    @Volatile
+    private var lastAvailable: Int = 0
+
+    @Volatile
+    private var readerLoops: Long = 0
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -42,9 +74,27 @@ class MainActivity : FlutterActivity() {
                     val message = call.argument<String>("message") ?: ""
                     write(message, result)
                 }
+                "debugStatus" -> debugStatus(result)
                 else -> result.notImplemented()
             }
         }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, eventsChannelName).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    eventSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    eventSink = null
+                }
+            },
+        )
+    }
+
+    override fun onDestroy() {
+        disconnect()
+        super.onDestroy()
     }
 
     private fun bluetoothAdapter(): BluetoothAdapter? {
@@ -105,7 +155,10 @@ class MainActivity : FlutterActivity() {
 
                 val connectedSocket = connectWithFallbacks(device)
                 socket = connectedSocket
+                input = connectedSocket.inputStream
                 output = connectedSocket.outputStream
+                resetReadDebugState()
+                startReader()
                 runOnUiThread { result.success(true) }
                 return@thread
             } catch (error: Throwable) {
@@ -125,25 +178,29 @@ class MainActivity : FlutterActivity() {
 
     @SuppressLint("MissingPermission")
     private fun connectWithFallbacks(device: BluetoothDevice): BluetoothSocket {
-        val factories = listOf<() -> BluetoothSocket>(
-            { device.createRfcommSocketToServiceRecord(sppUuid) },
-            { device.createInsecureRfcommSocketToServiceRecord(sppUuid) },
-            { createChannelOneSocket(device) },
+        val factories = listOf<Pair<String, () -> BluetoothSocket>>(
+            "Secure SPP UUID" to { device.createRfcommSocketToServiceRecord(sppUuid) },
+            "Insecure SPP UUID" to { device.createInsecureRfcommSocketToServiceRecord(sppUuid) },
+            "Channel 1 Method" to { createChannelOneSocket(device) },
         )
 
         var lastError: IOException? = null
-        for (factory in factories) {
+        for ((name, factory) in factories) {
+            Log.d("HC05_DEBUG", "Attempting factory: $name")
             val candidate = try {
                 factory()
             } catch (error: IOException) {
+                Log.d("HC05_DEBUG", "Factory $name failed to create: ${error.message}")
                 lastError = error
                 continue
             }
 
             try {
                 candidate.connect()
+                Log.d("HC05_DEBUG", "Factory $name successfully connected!")
                 return candidate
             } catch (error: IOException) {
+                Log.d("HC05_DEBUG", "Factory $name failed to connect: ${error.message}")
                 lastError = error
                 try {
                     candidate.close()
@@ -160,19 +217,135 @@ class MainActivity : FlutterActivity() {
         return method.invoke(device, 1) as BluetoothSocket
     }
 
+    private fun startReader() {
+        stopReader()
+
+        val stream = input
+        if (stream == null) {
+            Log.d("HC05_DEBUG", "startReader: InputStream is null!")
+            return
+        }
+        Log.d("HC05_DEBUG", "startReader: Starting reader thread...")
+        readerRunning = true
+        readerThread = thread(name = "hc05-reader", isDaemon = true) {
+            val line = StringBuilder()
+            val buffer = ByteArray(128)
+
+            try {
+                Log.d("HC05_DEBUG", "hc05-reader: Blocking reader thread entered loop.")
+                while (readerRunning) {
+                    readerLoops++
+                    val count = stream.read(buffer)
+                    if (count < 0) {
+                        Log.d("HC05_DEBUG", "hc05-reader: stream.read(buffer) returned EOF ($count)")
+                        break
+                    }
+
+                    bytesRead += count.toLong()
+                    lastAvailable = try {
+                        stream.available()
+                    } catch (_: IOException) {
+                        -1
+                    }
+                    for (i in 0 until count) {
+                        appendReceivedByte(buffer[i].toInt() and 0xff, line)
+                    }
+                }
+            } catch (error: IOException) {
+                Log.d("HC05_DEBUG", "hc05-reader: IOException: ${error.message}")
+                if (readerRunning) {
+                    emitLine("ERR:READ=${error.message ?: "Bluetooth read failed"}")
+                }
+            } finally {
+                Log.d("HC05_DEBUG", "hc05-reader: Thread exiting, readerRunning=$readerRunning")
+                readerRunning = false
+            }
+        }
+    }
+
+    private fun appendReceivedByte(value: Int, line: StringBuilder) {
+        val c = value.toChar()
+        if (c == '\n' || c == '\r') {
+            if (line.isNotEmpty()) {
+                emitLine(line.toString())
+                line.setLength(0)
+            }
+        } else if (line.length < 240) {
+            line.append(c)
+        } else {
+            droppedLines++
+            line.setLength(0)
+        }
+    }
+
+    private fun resetReadDebugState() {
+        bytesRead = 0
+        linesRead = 0
+        droppedLines = 0
+        lastLine = ""
+        lastAvailable = 0
+        readerLoops = 0
+    }
+
+    private fun emitLine(line: String) {
+        linesRead++
+        lastLine = line
+        Log.d("HC05_DEBUG", "hc05-reader: line='$line'")
+        runOnUiThread {
+            val sink = eventSink
+            if (sink == null) {
+                droppedLines++
+            } else {
+                sink.success(line)
+            }
+        }
+    }
+
+    private fun debugStatus(result: MethodChannel.Result) {
+        result.success(
+            mapOf(
+                "socketConnected" to (socket?.isConnected == true),
+                "readerRunning" to readerRunning,
+                "eventSinkActive" to (eventSink != null),
+                "bytesRead" to bytesRead,
+                "linesRead" to linesRead,
+                "droppedLines" to droppedLines,
+                "lastAvailable" to lastAvailable,
+                "readerLoops" to readerLoops,
+                "lastLine" to lastLine,
+            ),
+        )
+    }
+
+    private fun stopReader() {
+        readerRunning = false
+        try {
+            readerThread?.interrupt()
+        } catch (_: SecurityException) {
+        }
+        readerThread = null
+    }
+
     private fun write(message: String, result: MethodChannel.Result) {
+        Log.d("HC05_DEBUG", "write: message='$message'")
         thread {
             try {
                 val stream = output
                 if (stream == null) {
+                    Log.d("HC05_DEBUG", "write: OutputStream is null!")
                     runOnUiThread { result.error("NOT_CONNECTED", "Bluetooth socket is not connected", null) }
                     return@thread
                 }
 
-                stream.write(message.toByteArray(Charsets.US_ASCII))
-                stream.flush()
+                synchronized(writeLock) {
+                    Log.d("HC05_DEBUG", "write: sending payload over OutputStream...")
+                    stream.write(message.toByteArray(Charsets.US_ASCII))
+                    stream.flush()
+                    Log.d("HC05_DEBUG", "write: payload sent successfully.")
+                }
                 runOnUiThread { result.success(null) }
             } catch (error: IOException) {
+                Log.d("HC05_DEBUG", "write: IOException: ${error.message}")
                 disconnect()
                 runOnUiThread {
                     result.error("WRITE_FAILED", error.message ?: "Unable to write Bluetooth data", null)
@@ -182,6 +355,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun disconnect() {
+        stopReader()
+        try {
+            input?.close()
+        } catch (_: IOException) {
+        }
         try {
             output?.close()
         } catch (_: IOException) {
@@ -190,6 +368,7 @@ class MainActivity : FlutterActivity() {
             socket?.close()
         } catch (_: IOException) {
         }
+        input = null
         output = null
         socket = null
     }

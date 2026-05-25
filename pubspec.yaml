@@ -58,6 +58,15 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: Quicksand
+      fonts:
+        - asset: assets/fonts/Quicksand-VariableFont_wght.ttf
+    - family: FiraCode
+      fonts:
+        - asset: assets/fonts/FiraCode-Regular.ttf
+        - asset: assets/fonts/FiraCode-SemiBold.ttf
+          weight: 600
 
   # To add assets to your application, add an assets section, like this:
   # assets:
