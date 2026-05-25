@@ -100,7 +100,6 @@ int nodeTurnForwardMs = 260;
 int finalStopForwardMs = 90;
 
 int afterTurnForwardMs = 120;
-int straightReacquireTimeoutMs = 1100;
 int turnTimeoutMs = 1900;
 int minTurnBeforeDetectMs = 320;
 int lineStableMs = 45;
@@ -1296,28 +1295,7 @@ void executeStraightNode() {
   setLedGreen();
 
   driveForwardTimed(nodeStraightForwardMs, slowSpeed);
-
-  unsigned long start = millis();
-
-  while (millis() - start < straightReacquireTimeoutMs) {
-    readBluetooth();
-    if (robotMode != "LINE" || !routeRunning) {
-      stopMotors();
-      return;
-    }
-    readLineSensors();
-
-    if (normalCenterDetected()) {
-      moveMotors(speedValue, speedValue);
-      delay(afterTurnForwardMs);
-      return;
-    }
-
-    moveMotors(slowSpeed, slowSpeed);
-  }
-
-  stopMotors();
-  Serial.println("WARN:STRAIGHT_REACQUIRE_TIMEOUT");
+  Serial.println("STATE:RESUME_LINE");
 }
 
 void executeLeftTurnNode() {
