@@ -90,6 +90,8 @@ bool nodeLocked = false;
 
 unsigned long lastNodeTime = 0;
 unsigned long lastCenteredTime = 0;
+unsigned long lastMiddleStableTime = 0;
+unsigned long nodeCandidateStart = 0;
 
 unsigned long nodeCooldownMs = 450;
 const unsigned long nodeUnlockMinMs = 200;
@@ -169,6 +171,10 @@ bool normalCenterDetected();
 bool centerDetected();
 bool leftEdgeDetected();
 bool rightEdgeDetected();
+int middleBlackCount();
+bool middleHasAdjacentBlackPair();
+bool rightBranchPattern();
+bool leftBranchPattern();
 bool possibleNodeDetected();
 void handleRouteNode();
 void executeNode2RightSpecial();
@@ -565,6 +571,8 @@ void resetRouteProgress() {
   nodeLocked = false;
   lastNodeTime = 0;
   lastCenteredTime = 0;
+  lastMiddleStableTime = 0;
+  nodeCandidateStart = 0;
   lastLineDirection = 0;
 }
 
@@ -1050,6 +1058,11 @@ void readLineSensors() {
   if (normalCenterDetected()) {
     lastCenteredTime = millis();
   }
+
+  if (middleHasAdjacentBlackPair()) {
+    lastMiddleStableTime = millis();
+    nodeCandidateStart = 0;
+  }
 }
 
 bool centerDetected() {
@@ -1076,27 +1089,78 @@ bool rightEdgeDetected() {
   return (binarySensor[5] == 1 || binarySensor[6] == 1 || binarySensor[7] == 1);
 }
 
+int middleBlackCount() {
+  int count = 0;
+  if (binarySensor[2] == 1) count++;
+  if (binarySensor[3] == 1) count++;
+  if (binarySensor[4] == 1) count++;
+  if (binarySensor[5] == 1) count++;
+  return count;
+}
+
+bool middleHasAdjacentBlackPair() {
+  return (
+    (binarySensor[2] == 1 && binarySensor[3] == 1) ||
+    (binarySensor[3] == 1 && binarySensor[4] == 1) ||
+    (binarySensor[4] == 1 && binarySensor[5] == 1)
+  );
+}
+
+bool rightBranchPattern() {
+  return (
+    (binarySensor[6] == 1 && binarySensor[7] == 1) ||
+    (binarySensor[5] == 1 && binarySensor[6] == 1 && binarySensor[7] == 1) ||
+    (binarySensor[4] == 1 && binarySensor[5] == 1 && binarySensor[6] == 1 && binarySensor[7] == 1)
+  );
+}
+
+bool leftBranchPattern() {
+  return (
+    (binarySensor[0] == 1 && binarySensor[1] == 1) ||
+    (binarySensor[0] == 1 && binarySensor[1] == 1 && binarySensor[2] == 1) ||
+    (binarySensor[0] == 1 && binarySensor[1] == 1 && binarySensor[2] == 1 && binarySensor[3] == 1)
+  );
+}
+
 bool possibleNodeDetected() {
   if (!routeRunning || routeIndex >= routeActionCount) return false;
 
-  bool outerLeft = (binarySensor[0] == 1 || binarySensor[1] == 1);
-  bool outerRight = (binarySensor[6] == 1 || binarySensor[7] == 1);
-
-  bool bothEdges = outerLeft && outerRight;
-  bool manyBlack = blackCount >= 5;
-
-  bool whiteBox =
-    blackCount == 0 && lastCenteredTime > 0 && millis() - lastCenteredTime < 800;
-
-  bool edgeOnly =
-    blackCount > 0 && blackCount <= 3 && !centerDetected() && (leftEdgeDetected() || rightEdgeDetected());
-
+  unsigned long now = millis();
   char expectedAction = routeActions[routeIndex];
+  bool wasMiddleStableRecently =
+    lastMiddleStableTime > 0 && now - lastMiddleStableTime < 850;
 
-  bool expectedTurnOrStop =
-    expectedAction == 'L' || expectedAction == 'R' || expectedAction == 'U' || expectedAction == 'X';
+  if (!wasMiddleStableRecently) {
+    nodeCandidateStart = 0;
+    return false;
+  }
 
-  return bothEdges || manyBlack || whiteBox || (expectedTurnOrStop && edgeOnly);
+  int middleCount = middleBlackCount();
+
+  bool centerLossNode = middleCount <= 1;
+  bool expectedRightBranch = expectedAction == 'R' && rightBranchPattern();
+  bool expectedLeftBranch = expectedAction == 'L' && leftBranchPattern();
+  bool expectedStopOrUTurn =
+    (expectedAction == 'X' || expectedAction == 'U') &&
+    (centerLossNode || (leftBranchPattern() && rightBranchPattern()));
+
+  bool nodeLike =
+    centerLossNode ||
+    expectedRightBranch ||
+    expectedLeftBranch ||
+    expectedStopOrUTurn;
+
+  if (!nodeLike) {
+    nodeCandidateStart = 0;
+    return false;
+  }
+
+  if (nodeCandidateStart == 0) {
+    nodeCandidateStart = now;
+    return false;
+  }
+
+  return now - nodeCandidateStart >= (unsigned long)lostConfirmMs;
 }
 
 // ======================================================

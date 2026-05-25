@@ -150,6 +150,14 @@ Turn handling is two-speed:
 3. Slow catch rotate using `CATCHTURN`.
 4. Accept the new line once center sensors are stable for `STABLEMS`.
 
+Node detection is transition-based, not broad black-count-based:
+
+1. The middle sensors D3-D6 must first have a stable adjacent black pair.
+2. A node candidate is then a confirmed middle loss (`D3-D6` has 0-1 black sensors) or an expected branch pattern.
+3. Right turns can accept right-heavy branch patterns like `00000011`, `00000111`, `00001111` in firmware order.
+4. Left turns can accept left-heavy branch patterns like `11000000`, `11100000`, `11110000` in firmware order.
+5. The candidate must persist for `LOSTMS`, and cooldown/node lock prevents repeated node detections.
+
 ## Sensor Telemetry
 
 Firmware sends raw telemetry like:
