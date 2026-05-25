@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/calibration.dart';
 import '../models/robot_graph.dart';
@@ -20,6 +21,9 @@ class TraversalScreen extends StatefulWidget {
 
 class _TraversalScreenState extends State<TraversalScreen>
     with SingleTickerProviderStateMixin {
+  static const _calibrationPrefsPrefix = 'traversal_calibration.';
+  static const _calibrationCommandGap = Duration(milliseconds: 55);
+
   final TransformationController _mapController = TransformationController();
 
   late final AnimationController _robotSlideController;
@@ -55,9 +59,8 @@ class _TraversalScreenState extends State<TraversalScreen>
   @override
   void initState() {
     super.initState();
-    _calibration = defaultCalibrationValues()
-      ..['baseSpeed'] = _bluetooth.speed.toDouble()
-      ..['threshold'] = _bluetooth.telemetry.threshold.toDouble();
+    _calibration = defaultCalibrationValues();
+    unawaited(_loadSavedCalibration());
 
     _robotSlideController = AnimationController(
       vsync: this,
@@ -106,7 +109,7 @@ class _TraversalScreenState extends State<TraversalScreen>
       if (ensureLineMode) 'PING',
       if (ensureLineMode) 'LINE',
       if (includeRate)
-        'CFG:TELMS=${RobotBluetoothService.traversalTelemetryIntervalMs}',
+        'CFG:TELMS=${formatCalibrationValue(_calibration['telemetryMs'] ?? RobotBluetoothService.traversalTelemetryIntervalMs.toDouble())}',
       _telemetryModeCommand,
       if (requestSample) 'GETSENS',
     ]);
@@ -161,11 +164,9 @@ class _TraversalScreenState extends State<TraversalScreen>
     final threshold = telemetry.threshold.toDouble();
     var needsSetState = false;
 
-    if (_calibration['threshold'] == threshold) {
+    if (_pendingCalibrationKeys.contains('threshold') &&
+        _calibration['threshold'] == threshold) {
       _pendingCalibrationKeys.remove('threshold');
-    } else if (!_pendingCalibrationKeys.contains('threshold')) {
-      _calibration['threshold'] = threshold;
-      needsSetState = true;
     }
 
     if (telemetry.nodeEventId != _lastNodeEventId && telemetry.node != null) {
@@ -359,9 +360,9 @@ class _TraversalScreenState extends State<TraversalScreen>
       _running = true;
     });
 
+    await _bluetooth.sendCommandSequence(['S', 'LINE']);
+    await _sendCalibrationProfile();
     await _bluetooth.sendCommandSequence([
-      'S',
-      'LINE',
       'PATH:${_currentPath.join(',')}',
       'ROUTE:${_commands.join()}',
       'START',
@@ -430,11 +431,60 @@ class _TraversalScreenState extends State<TraversalScreen>
     setState(() {
       _calibration[key] = clamped;
     });
+    unawaited(_saveCalibrationValue(item, clamped));
 
     if (send) {
       _pendingCalibrationKeys.add(item.key);
       _sendCalibrationValue(item);
     }
+  }
+
+  Future<void> _loadSavedCalibration() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedValues = defaultCalibrationValues();
+
+    for (final item in calibrationItems) {
+      final saved = prefs.getDouble('$_calibrationPrefsPrefix${item.key}');
+      if (saved != null) {
+        savedValues[item.key] = saved.clamp(item.min, item.max).toDouble();
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _calibration
+        ..clear()
+        ..addAll(savedValues);
+    });
+
+    if (_bluetooth.isConnected) {
+      await _sendCalibrationProfile();
+    }
+  }
+
+  Future<void> _saveCalibrationValue(CalibrationItem item, double value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('$_calibrationPrefsPrefix${item.key}', value);
+  }
+
+  List<String> _calibrationCommands() {
+    return [
+      for (final item in calibrationItems)
+        'CFG:${item.command}=${formatCalibrationValue(_calibration[item.key] ?? item.min)}',
+    ];
+  }
+
+  Future<void> _sendCalibrationProfile() {
+    if (!_bluetooth.isConnected) {
+      return Future<void>.value();
+    }
+    return _bluetooth.sendCommandSequence(
+      _calibrationCommands(),
+      gap: _calibrationCommandGap,
+    );
   }
 
   void _sendCalibrationValue(CalibrationItem item) {

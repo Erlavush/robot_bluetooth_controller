@@ -51,6 +51,9 @@ int speedValue = 155;
 int slowSpeed = 95;
 int maxSpeed = 255;
 int minDrivePwm = 90;
+int leftTrim = 0;
+int rightTrim = 0;
+int manualCurvePercent = 68;
 
 String robotMode = "MANUAL";
 String ledMode = "BLUE";
@@ -91,14 +94,18 @@ unsigned long lastCenteredTime = 0;
 unsigned long nodeCooldownMs = 450;
 const unsigned long nodeUnlockMinMs = 200;
 
-int nodeStraightForwardMs = 220;
-int nodeTurnForwardMs = 130;
+int nodePauseMs = 3000;
+int nodeStraightForwardMs = 260;
+int nodeTurnForwardMs = 260;
 int finalStopForwardMs = 90;
 
 int afterTurnForwardMs = 120;
 int straightReacquireTimeoutMs = 1100;
 int turnTimeoutMs = 1900;
 int minTurnBeforeDetectMs = 320;
+int lineStableMs = 45;
+int lostConfirmMs = 35;
+int telemetryIntervalMs = 140;
 
 // Slower pivot values
 int nodeTurnSpeed = 145;
@@ -152,6 +159,8 @@ void enterTraversalReady();
 void parsePathCommand(String pathText);
 void parseRouteCommand(String routeText);
 void startRoute();
+bool routeStillActive();
+void nodePauseBlocking();
 void lineTraceMode();
 void checkMovementFailsafe();
 void updateLedMode();
@@ -254,7 +263,7 @@ void checkTelemetry() {
   // Only stream telemetry automatically in LINE (Traversal) mode!
   // In MANUAL mode, automatic streaming is 100% DISABLED to save CPU/lag!
   if (robotMode == "LINE") {
-    if (millis() - lastTelemetryTime >= 140) {
+    if (millis() - lastTelemetryTime >= (unsigned long)telemetryIntervalMs) {
       lastTelemetryTime = millis();
       sendTelemetry();
     }
@@ -492,30 +501,52 @@ void processCommand(String cmd) {
       float val = valStr.toFloat();
       
       if (key == "THR") {
-        threshold = (int)val;
+        threshold = constrain((int)val, 0, 1023);
       } else if (key == "SPD") {
-        speedValue = (int)val;
+        speedValue = constrain((int)val, 90, 255);
+        if (slowSpeed > speedValue) slowSpeed = speedValue;
       } else if (key == "TURN") {
-        nodeTurnSpeed = (int)val;
-        node2TurnSpeed = (int)val;
+        nodeTurnSpeed = constrain((int)val, 60, 255);
+        node2TurnSpeed = nodeTurnSpeed;
       } else if (key == "SLOW") {
-        slowSpeed = (int)val;
+        slowSpeed = constrain((int)val, 50, 220);
       } else if (key == "KP") {
-        Kp = val;
+        Kp = constrain(val, 0.0, 60.0);
+      } else if (key == "PAUSE") {
+        nodePauseMs = constrain((int)val, 0, 3000);
       } else if (key == "COOLDOWN") {
-        nodeCooldownMs = (unsigned long)val;
+        nodeCooldownMs = (unsigned long)constrain((int)val, 0, 3000);
+      } else if (key == "NODEFWD") {
+        nodeStraightForwardMs = constrain((int)val, 0, 2500);
+        nodeTurnForwardMs = nodeStraightForwardMs;
       } else if (key == "TURNTIME") {
-        turnTimeoutMs = (int)val;
+        turnTimeoutMs = constrain((int)val, 200, 5000);
       } else if (key == "MINTURN") {
-        minTurnBeforeDetectMs = (int)val;
+        minTurnBeforeDetectMs = constrain((int)val, 0, 2000);
       } else if (key == "AFTERTURN") {
-        afterTurnForwardMs = (int)val;
+        afterTurnForwardMs = constrain((int)val, 0, 2000);
       } else if (key == "FINALFWD") {
-        finalStopForwardMs = (int)val;
+        finalStopForwardMs = constrain((int)val, 0, 1500);
       } else if (key == "MINPWM") {
-        minDrivePwm = (int)val;
+        minDrivePwm = constrain((int)val, 0, 255);
       } else if (key == "MINPIVOT") {
-        minPivotPwm = (int)val;
+        minPivotPwm = constrain((int)val, 0, 255);
+      } else if (key == "LTRIM") {
+        leftTrim = constrain((int)val, -80, 80);
+      } else if (key == "RTRIM") {
+        rightTrim = constrain((int)val, -80, 80);
+      } else if (key == "STABLEMS") {
+        lineStableMs = constrain((int)val, 0, 1000);
+      } else if (key == "LOSTMS") {
+        lostConfirmMs = constrain((int)val, 0, 1000);
+      } else if (key == "TELMS") {
+        telemetryIntervalMs = constrain((int)val, 80, 1000);
+      } else if (key == "MCURVE") {
+        manualCurvePercent = constrain((int)val, 35, 90);
+      } else {
+        Serial.print("ERR:CFG_UNKNOWN=");
+        Serial.println(key);
+        return;
       }
       
       Serial.print("CFG:");
@@ -707,7 +738,8 @@ void forwardLeft() {
   setLeftForward();
   setRightForward();
 
-  analogWrite(PWMA, slowSpeed);
+  int curveSpeed = constrain((speedValue * manualCurvePercent) / 100, minDrivePwm, speedValue);
+  analogWrite(PWMA, curveSpeed);
   analogWrite(PWMB, speedValue);
 }
 
@@ -716,14 +748,16 @@ void forwardRight() {
   setRightForward();
 
   analogWrite(PWMA, speedValue);
-  analogWrite(PWMB, slowSpeed);
+  int curveSpeed = constrain((speedValue * manualCurvePercent) / 100, minDrivePwm, speedValue);
+  analogWrite(PWMB, curveSpeed);
 }
 
 void backwardLeft() {
   setLeftBackward();
   setRightBackward();
 
-  analogWrite(PWMA, slowSpeed);
+  int curveSpeed = constrain((speedValue * manualCurvePercent) / 100, minDrivePwm, speedValue);
+  analogWrite(PWMA, curveSpeed);
   analogWrite(PWMB, speedValue);
 }
 
@@ -732,15 +766,16 @@ void backwardRight() {
   setRightBackward();
 
   analogWrite(PWMA, speedValue);
-  analogWrite(PWMB, slowSpeed);
+  int curveSpeed = constrain((speedValue * manualCurvePercent) / 100, minDrivePwm, speedValue);
+  analogWrite(PWMB, curveSpeed);
 }
 
 void moveMotors(int leftSpeed, int rightSpeed) {
   setLeftForward();
   setRightForward();
 
-  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
-  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
+  leftSpeed = constrain(leftSpeed + leftTrim, 0, maxSpeed);
+  rightSpeed = constrain(rightSpeed + rightTrim, 0, maxSpeed);
 
   if (leftSpeed > 0 && leftSpeed < minDrivePwm) {
     leftSpeed = minDrivePwm;
@@ -758,8 +793,8 @@ void moveMotorsBackward(int leftSpeed, int rightSpeed) {
   setLeftBackward();
   setRightBackward();
 
-  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
-  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
+  leftSpeed = constrain(leftSpeed + leftTrim, 0, maxSpeed);
+  rightSpeed = constrain(rightSpeed + rightTrim, 0, maxSpeed);
 
   if (leftSpeed > 0 && leftSpeed < minDrivePwm) {
     leftSpeed = minDrivePwm;
@@ -790,6 +825,43 @@ void driveForwardTimed(int durationMs, int spd) {
       return;
     }
     moveMotors(spd, spd);
+  }
+
+  stopMotors();
+}
+
+bool routeStillActive() {
+  return robotMode == "LINE" && routeRunning;
+}
+
+void nodePauseBlocking() {
+  unsigned long start = millis();
+  unsigned long lastBlink = 0;
+  bool redState = true;
+
+  stopMotors();
+  Serial.println("STATE:PAUSE");
+
+  while (millis() - start < (unsigned long)nodePauseMs) {
+    readBluetooth();
+    if (!routeStillActive()) {
+      stopMotors();
+      return;
+    }
+
+    stopMotors();
+    if (millis() - lastBlink >= 120) {
+      lastBlink = millis();
+      if (redState) {
+        setLedRed();
+      } else {
+        setLedBlue();
+      }
+      redState = !redState;
+    }
+
+    checkTelemetry();
+    delay(5);
   }
 
   stopMotors();
@@ -1117,9 +1189,10 @@ void handleRouteNode() {
   Serial.println(action);
   Serial.println("STATE:NODE");
 
-  setLedCyan();
-  stopMotors();
-  delay(80);
+  nodePauseBlocking();
+  if (!routeStillActive()) {
+    return;
+  }
 
   if (action == 'X') {
     Serial.println("STATE:FINAL_NODE");
@@ -1242,6 +1315,9 @@ void executeStraightNode() {
 
     moveMotors(slowSpeed, slowSpeed);
   }
+
+  stopMotors();
+  Serial.println("WARN:STRAIGHT_REACQUIRE_TIMEOUT");
 }
 
 void executeLeftTurnNode() {
@@ -1251,10 +1327,11 @@ void executeLeftTurnNode() {
   driveForwardTimed(nodeTurnForwardMs, slowSpeed);
 
   unsigned long start = millis();
+  unsigned long centerStart = 0;
 
   while (millis() - start < turnTimeoutMs) {
     readBluetooth();
-    if (robotMode != "LINE" || !routeRunning) {
+    if (!routeStillActive()) {
       stopMotors();
       return;
     }
@@ -1262,16 +1339,22 @@ void executeLeftTurnNode() {
     readLineSensors();
 
     if (millis() - start > minTurnBeforeDetectMs && normalCenterDetected()) {
-      stopMotors();
-      delay(80);
+      if (centerStart == 0) centerStart = millis();
 
-      moveMotors(speedValue, speedValue);
-      delay(afterTurnForwardMs);
-      return;
+      if (millis() - centerStart >= (unsigned long)lineStableMs) {
+        stopMotors();
+        delay(80);
+
+        driveForwardTimed(afterTurnForwardMs, speedValue);
+        return;
+      }
+    } else {
+      centerStart = 0;
     }
   }
 
   stopMotors();
+  Serial.println("WARN:TURN_LEFT_TIMEOUT");
 }
 
 void executeRightTurnNode() {
@@ -1281,10 +1364,11 @@ void executeRightTurnNode() {
   driveForwardTimed(nodeTurnForwardMs, slowSpeed);
 
   unsigned long start = millis();
+  unsigned long centerStart = 0;
 
   while (millis() - start < turnTimeoutMs) {
     readBluetooth();
-    if (robotMode != "LINE" || !routeRunning) {
+    if (!routeStillActive()) {
       stopMotors();
       return;
     }
@@ -1292,16 +1376,22 @@ void executeRightTurnNode() {
     readLineSensors();
 
     if (millis() - start > minTurnBeforeDetectMs && normalCenterDetected()) {
-      stopMotors();
-      delay(80);
+      if (centerStart == 0) centerStart = millis();
 
-      moveMotors(speedValue, speedValue);
-      delay(afterTurnForwardMs);
-      return;
+      if (millis() - centerStart >= (unsigned long)lineStableMs) {
+        stopMotors();
+        delay(80);
+
+        driveForwardTimed(afterTurnForwardMs, speedValue);
+        return;
+      }
+    } else {
+      centerStart = 0;
     }
   }
 
   stopMotors();
+  Serial.println("WARN:TURN_RIGHT_TIMEOUT");
 }
 
 void executeUTurnNode() {
@@ -1313,10 +1403,11 @@ void executeUTurnNode() {
   unsigned long start = millis();
   int uTurnTimeoutMs = turnTimeoutMs + 900;
   int uTurnMinDetectMs = minTurnBeforeDetectMs + 250;
+  unsigned long centerStart = 0;
 
   while (millis() - start < (unsigned long)uTurnTimeoutMs) {
     readBluetooth();
-    if (robotMode != "LINE" || !routeRunning) {
+    if (!routeStillActive()) {
       stopMotors();
       return;
     }
@@ -1324,14 +1415,20 @@ void executeUTurnNode() {
     readLineSensors();
 
     if (millis() - start > (unsigned long)uTurnMinDetectMs && normalCenterDetected()) {
-      stopMotors();
-      delay(80);
+      if (centerStart == 0) centerStart = millis();
 
-      moveMotors(speedValue, speedValue);
-      delay(afterTurnForwardMs);
-      return;
+      if (millis() - centerStart >= (unsigned long)lineStableMs) {
+        stopMotors();
+        delay(80);
+
+        driveForwardTimed(afterTurnForwardMs, speedValue);
+        return;
+      }
+    } else {
+      centerStart = 0;
     }
   }
 
   stopMotors();
+  Serial.println("WARN:UTURN_TIMEOUT");
 }
