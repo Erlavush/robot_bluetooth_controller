@@ -108,6 +108,7 @@ int telemetryIntervalMs = 140;
 
 // Slower pivot values
 int nodeTurnSpeed = 145;
+int catchTurnSpeed = 105;
 int minPivotPwm = 125;
 
 int lastLineDirection = 0;
@@ -507,6 +508,8 @@ void processCommand(String cmd) {
       } else if (key == "TURN") {
         nodeTurnSpeed = constrain((int)val, 60, 255);
         node2TurnSpeed = nodeTurnSpeed;
+      } else if (key == "CATCHTURN") {
+        catchTurnSpeed = constrain((int)val, 40, 220);
       } else if (key == "SLOW") {
         slowSpeed = constrain((int)val, 50, 220);
       } else if (key == "KP") {
@@ -1259,6 +1262,7 @@ void executeNode2RightSpecial() {
 
   unsigned long turnStart = millis();
   unsigned long centerStart = 0;
+  bool catchLogged = false;
 
   while (millis() - turnStart < node2TurnTimeoutMs) {
     readBluetooth();
@@ -1266,10 +1270,15 @@ void executeNode2RightSpecial() {
       stopMotors();
       return;
     }
-    pivotRightNode2Control(usableTurn);
+    bool detectionAllowed = millis() - turnStart > node2MinTurnMs;
+    if (detectionAllowed && !catchLogged) {
+      Serial.println("STATE:TURN_CATCH");
+      catchLogged = true;
+    }
+    pivotRightNode2Control(detectionAllowed ? catchTurnSpeed : usableTurn);
     readLineSensors();
 
-    if (millis() - turnStart > node2MinTurnMs && centerDetected()) {
+    if (detectionAllowed && centerDetected()) {
       if (centerStart == 0) {
         centerStart = millis();
       }
@@ -1306,6 +1315,7 @@ void executeLeftTurnNode() {
 
   unsigned long start = millis();
   unsigned long centerStart = 0;
+  bool catchLogged = false;
 
   while (millis() - start < turnTimeoutMs) {
     readBluetooth();
@@ -1313,10 +1323,15 @@ void executeLeftTurnNode() {
       stopMotors();
       return;
     }
-    pivotLeftTimedControl(nodeTurnSpeed);
+    bool detectionAllowed = millis() - start > (unsigned long)minTurnBeforeDetectMs;
+    if (detectionAllowed && !catchLogged) {
+      Serial.println("STATE:TURN_CATCH");
+      catchLogged = true;
+    }
+    pivotLeftTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (millis() - start > minTurnBeforeDetectMs && normalCenterDetected()) {
+    if (detectionAllowed && centerDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {
@@ -1343,6 +1358,7 @@ void executeRightTurnNode() {
 
   unsigned long start = millis();
   unsigned long centerStart = 0;
+  bool catchLogged = false;
 
   while (millis() - start < turnTimeoutMs) {
     readBluetooth();
@@ -1350,10 +1366,15 @@ void executeRightTurnNode() {
       stopMotors();
       return;
     }
-    pivotRightTimedControl(nodeTurnSpeed);
+    bool detectionAllowed = millis() - start > (unsigned long)minTurnBeforeDetectMs;
+    if (detectionAllowed && !catchLogged) {
+      Serial.println("STATE:TURN_CATCH");
+      catchLogged = true;
+    }
+    pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (millis() - start > minTurnBeforeDetectMs && normalCenterDetected()) {
+    if (detectionAllowed && centerDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {
@@ -1382,6 +1403,7 @@ void executeUTurnNode() {
   int uTurnTimeoutMs = turnTimeoutMs + 900;
   int uTurnMinDetectMs = minTurnBeforeDetectMs + 250;
   unsigned long centerStart = 0;
+  bool catchLogged = false;
 
   while (millis() - start < (unsigned long)uTurnTimeoutMs) {
     readBluetooth();
@@ -1389,10 +1411,15 @@ void executeUTurnNode() {
       stopMotors();
       return;
     }
-    pivotRightTimedControl(nodeTurnSpeed);
+    bool detectionAllowed = millis() - start > (unsigned long)uTurnMinDetectMs;
+    if (detectionAllowed && !catchLogged) {
+      Serial.println("STATE:TURN_CATCH");
+      catchLogged = true;
+    }
+    pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (millis() - start > (unsigned long)uTurnMinDetectMs && normalCenterDetected()) {
+    if (detectionAllowed && centerDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {

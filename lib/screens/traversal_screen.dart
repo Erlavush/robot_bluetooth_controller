@@ -19,15 +19,53 @@ class TraversalScreen extends StatefulWidget {
   State<TraversalScreen> createState() => _TraversalScreenState();
 }
 
+class _CalibrationUndo {
+  const _CalibrationUndo({required this.item, required this.previousValue});
+
+  final CalibrationItem item;
+  final double previousValue;
+}
+
 class _TraversalScreenState extends State<TraversalScreen>
     with SingleTickerProviderStateMixin {
   static const _calibrationPrefsPrefix = 'traversal_calibration.';
   static const _calibrationCommandGap = Duration(milliseconds: 55);
+  static const _uiRefreshInterval = Duration(milliseconds: 120);
+  static const Map<String, List<String>> _calibrationGroups = {
+    'Drive': [
+      'baseSpeed',
+      'slowSpeed',
+      'turnSpeed',
+      'catchTurnSpeed',
+      'minPivot',
+      'minPwm',
+      'manualCurve',
+    ],
+    'Node': [
+      'nodePause',
+      'nodeForward',
+      'minTurn',
+      'stableMs',
+      'afterTurn',
+      'turnTimeout',
+      'nodeCooldown',
+      'finalForward',
+    ],
+    'Sensors': [
+      'threshold',
+      'kp',
+      'leftTrim',
+      'rightTrim',
+      'lostMs',
+      'telemetryMs',
+    ],
+  };
 
   final TransformationController _mapController = TransformationController();
 
   late final AnimationController _robotSlideController;
   late final Map<String, double> _calibration;
+  late final Map<String, double> _savedCalibration;
 
   GraphEdge? _selectedEdge;
   List<int>? _direction;
@@ -36,9 +74,11 @@ class _TraversalScreenState extends State<TraversalScreen>
   List<String> _commands = [];
   bool _running = false;
   bool _calibrationOpen = false;
+  String _calibrationGroup = 'Drive';
   bool _mapFitted = false;
   bool _showRawSensorValues = true;
   final Set<String> _pendingCalibrationKeys = <String>{};
+  _CalibrationUndo? _lastCalibrationUndo;
 
   Offset? _robotPosition;
   Offset? _slideStart;
@@ -51,8 +91,10 @@ class _TraversalScreenState extends State<TraversalScreen>
   Timer? _sensorModeTimer;
   Timer? _telemetryWatchdogTimer;
   DateTime? _lastTelemetrySyncAt;
+  DateTime? _lastUiRefreshAt;
   int? _currentNode;
   int _lastNodeEventId = 0;
+  int _lastSensorPacketEventId = 0;
 
   RobotBluetoothService get _bluetooth => widget.bluetoothService;
 
@@ -60,6 +102,7 @@ class _TraversalScreenState extends State<TraversalScreen>
   void initState() {
     super.initState();
     _calibration = defaultCalibrationValues();
+    _savedCalibration = Map<String, double>.from(_calibration);
     unawaited(_loadSavedCalibration());
 
     _robotSlideController = AnimationController(
@@ -68,6 +111,7 @@ class _TraversalScreenState extends State<TraversalScreen>
     )..addListener(_updateRobotSlide);
 
     _lastNodeEventId = _bluetooth.telemetry.nodeEventId;
+    _lastSensorPacketEventId = _bluetooth.telemetry.sensorPacketEventId;
     _bluetooth.addListener(_handleBluetoothUpdate);
     _sensorModeTimer = Timer(const Duration(milliseconds: 120), () async {
       await _syncTelemetryMode(
@@ -180,9 +224,29 @@ class _TraversalScreenState extends State<TraversalScreen>
       needsSetState = true;
     }
 
+    if (telemetry.sensorPacketEventId != _lastSensorPacketEventId) {
+      _lastSensorPacketEventId = telemetry.sensorPacketEventId;
+      if (_shouldRefreshTelemetryUi()) {
+        needsSetState = true;
+      }
+    } else {
+      needsSetState = true;
+    }
+
     if (needsSetState && mounted) {
       setState(() {});
     }
+  }
+
+  bool _shouldRefreshTelemetryUi() {
+    final now = DateTime.now();
+    final last = _lastUiRefreshAt;
+    if (last != null && now.difference(last) < _uiRefreshInterval) {
+      return false;
+    }
+
+    _lastUiRefreshAt = now;
+    return true;
   }
 
   void _updateRobotSlide() {
@@ -427,16 +491,42 @@ class _TraversalScreenState extends State<TraversalScreen>
   void _setCalibrationValue(String key, double value, {bool send = false}) {
     final item = calibrationItems.firstWhere((entry) => entry.key == key);
     final clamped = value.clamp(item.min, item.max).toDouble();
+    final previousSaved =
+        _savedCalibration[key] ?? _calibration[key] ?? item.min;
 
     setState(() {
       _calibration[key] = clamped;
+      if (send && previousSaved != clamped) {
+        _lastCalibrationUndo = _CalibrationUndo(
+          item: item,
+          previousValue: previousSaved,
+        );
+      }
     });
-    unawaited(_saveCalibrationValue(item, clamped));
 
     if (send) {
+      _savedCalibration[key] = clamped;
+      unawaited(_saveCalibrationValue(item, clamped));
       _pendingCalibrationKeys.add(item.key);
       _sendCalibrationValue(item);
     }
+  }
+
+  void _undoCalibrationChange() {
+    final undo = _lastCalibrationUndo;
+    if (undo == null) {
+      return;
+    }
+
+    setState(() {
+      _calibration[undo.item.key] = undo.previousValue;
+      _savedCalibration[undo.item.key] = undo.previousValue;
+      _lastCalibrationUndo = null;
+    });
+
+    unawaited(_saveCalibrationValue(undo.item, undo.previousValue));
+    _pendingCalibrationKeys.add(undo.item.key);
+    _sendCalibrationValue(undo.item);
   }
 
   Future<void> _loadSavedCalibration() async {
@@ -456,6 +546,9 @@ class _TraversalScreenState extends State<TraversalScreen>
 
     setState(() {
       _calibration
+        ..clear()
+        ..addAll(savedValues);
+      _savedCalibration
         ..clear()
         ..addAll(savedValues);
     });
@@ -495,6 +588,14 @@ class _TraversalScreenState extends State<TraversalScreen>
     );
   }
 
+  List<CalibrationItem> get _visibleCalibrationItems {
+    final keys = _calibrationGroups[_calibrationGroup] ?? const <String>[];
+    return [
+      for (final item in calibrationItems)
+        if (keys.contains(item.key)) item,
+    ];
+  }
+
   void _setRawSensorValuesEnabled(bool enabled) {
     setState(() {
       _showRawSensorValues = enabled;
@@ -504,45 +605,40 @@ class _TraversalScreenState extends State<TraversalScreen>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _bluetooth,
-      builder: (context, _) {
-        return PopScope(
-          canPop: true,
-          onPopInvokedWithResult: (didPop, _) {
-            if (didPop) {
-              _stopTraversal();
-            }
-          },
-          child: Scaffold(
-            backgroundColor: Colors.black,
-            body: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  children: [
-                    _TraversalTopBar(
-                      bluetooth: _bluetooth,
-                      showRawSensorValues: _showRawSensorValues,
-                      onBack: _backToManual,
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(child: _buildMapCard()),
-                          const SizedBox(width: 28),
-                          SizedBox(width: 330, child: _buildControlCard()),
-                        ],
-                      ),
-                    ),
-                  ],
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          _stopTraversal();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              children: [
+                _TraversalTopBar(
+                  bluetooth: _bluetooth,
+                  showRawSensorValues: _showRawSensorValues,
+                  onBack: _backToManual,
                 ),
-              ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(child: _buildMapCard()),
+                      const SizedBox(width: 28),
+                      SizedBox(width: 330, child: _buildControlCard()),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -733,11 +829,21 @@ class _TraversalScreenState extends State<TraversalScreen>
               _CalibrationPanel(
                 open: _calibrationOpen,
                 values: _calibration,
+                items: _visibleCalibrationItems,
+                groups: _calibrationGroups.keys.toList(growable: false),
+                selectedGroup: _calibrationGroup,
+                canUndo: _lastCalibrationUndo != null,
                 onToggle: () {
                   setState(() {
                     _calibrationOpen = !_calibrationOpen;
                   });
                 },
+                onGroupChanged: (group) {
+                  setState(() {
+                    _calibrationGroup = group;
+                  });
+                },
+                onUndo: _undoCalibrationChange,
                 onChanged: _setCalibrationValue,
               ),
               const SizedBox(height: 12),
@@ -1234,13 +1340,25 @@ class _CalibrationPanel extends StatelessWidget {
   const _CalibrationPanel({
     required this.open,
     required this.values,
+    required this.items,
+    required this.groups,
+    required this.selectedGroup,
+    required this.canUndo,
     required this.onToggle,
+    required this.onGroupChanged,
+    required this.onUndo,
     required this.onChanged,
   });
 
   final bool open;
   final Map<String, double> values;
+  final List<CalibrationItem> items;
+  final List<String> groups;
+  final String selectedGroup;
+  final bool canUndo;
   final VoidCallback onToggle;
+  final ValueChanged<String> onGroupChanged;
+  final VoidCallback onUndo;
   final void Function(String key, double value, {bool send}) onChanged;
 
   @override
@@ -1267,13 +1385,56 @@ class _CalibrationPanel extends StatelessWidget {
             ],
           ),
         ),
-        if (open)
-          for (final item in calibrationItems)
+        if (open) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 42,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: selectedGroup,
+                      dropdownColor: Colors.white,
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w900,
+                      ),
+                      items: [
+                        for (final group in groups)
+                          DropdownMenuItem(value: group, child: Text(group)),
+                      ],
+                      onChanged: (group) {
+                        if (group != null) {
+                          onGroupChanged(group);
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 86,
+                child: _MiniButton(
+                  label: 'UNDO',
+                  onPressed: canUndo ? onUndo : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final item in items)
             _CalibrationRow(
               item: item,
               value: values[item.key] ?? item.min,
               onChanged: onChanged,
             ),
+        ],
       ],
     );
   }

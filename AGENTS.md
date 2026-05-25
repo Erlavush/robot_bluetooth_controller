@@ -117,6 +117,7 @@ Firmware accepts:
 - `START`: starts line traversal
 - `S`: stop and return manual
 - `MANUAL`: stop and return manual
+- `CFG:CATCHTURN=<value>`: slower catch-turn pivot speed after blind turn time
 
 Firmware emits traversal logs:
 
@@ -129,6 +130,7 @@ Firmware emits traversal logs:
 - `STATE:STRAIGHT`
 - `STATE:TURN_LEFT`
 - `STATE:TURN_RIGHT`
+- `STATE:TURN_CATCH`
 - `STATE:UTURN`
 - `STATE:FINAL_NODE`
 - `STATE:FINISHED`
@@ -140,6 +142,13 @@ Route commands mean:
 - `R`: turn right
 - `U`: U-turn
 - `X`: final stop node
+
+Turn handling is two-speed:
+
+1. Drive forward using `NODEFWD` with detection disabled.
+2. Blind rotate using `TURN` until `MINTURN` has elapsed.
+3. Slow catch rotate using `CATCHTURN`.
+4. Accept the new line once center sensors are stable for `STABLEMS`.
 
 ## Sensor Telemetry
 

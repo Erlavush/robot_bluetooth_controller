@@ -42,6 +42,14 @@ const calibrationItems = [
     command: 'TURN',
   ),
   CalibrationItem(
+    key: 'catchTurnSpeed',
+    label: 'Catch Turn',
+    min: 40,
+    max: 220,
+    step: 1,
+    command: 'CATCHTURN',
+  ),
+  CalibrationItem(
     key: 'slowSpeed',
     label: 'Slow SPD',
     min: 50,
@@ -184,6 +192,7 @@ Map<String, double> defaultCalibrationValues() {
     'threshold': 930,
     'baseSpeed': 155,
     'turnSpeed': 145,
+    'catchTurnSpeed': 105,
     'slowSpeed': 95,
     'manualCurve': 68,
     'kp': 12,
