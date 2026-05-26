@@ -39,6 +39,11 @@ The repo was pushed to GitHub at:
   - D1-D8 sensor channels map to Nano `A0-A7`
   - Firmware raw order is `D1,D2,D3,D4,D5,D6,D7,D8`
   - UI displays reversed as `D8,D7,D6,D5,D4,D3,D2,D1`
+- Current physical traversal map:
+  - 21 numbered nodes from `/home/eru/robot_bluetooth_controller/mapcheka.html`
+  - Nodes are 10 cm x 10 cm pure black blocks
+  - Edges/lines are 3 cm wide black tracks
+  - 8-sensor array is about 5.5 cm wide, so a centered 3 cm line is usually 3-4 black sensors and a node block is usually 6-8 black sensors
 
 ## Bluetooth Rules
 
@@ -91,13 +96,27 @@ When user taps Traversal Mode:
    - Sensor telemetry enabled
    - Robot does not run yet
 
-When user selects a route and presses Confirm:
+Flutter has two traversal setup modes:
+
+- Showcase mode:
+  - Fixed START line into node `1`
+  - Fixed finish from node `21` to the FINISH line
+  - Can calculate shortest or longest simple demo route
+  - Sends `FINISH:<action>` so final node `X` can exit onto the finish line before stopping
+- Manual placement mode:
+  - User selects a start edge/direction and destination node
+  - Sends `FINISH:OFF`
+  - Final `X` stops at the selected destination node
+
+When user selects/calculates a route and presses Confirm:
 
 1. Flutter sends `S`
 2. Flutter sends `LINE`
-3. Flutter sends `PATH:<node list>`
-4. Flutter sends `ROUTE:<commands>`
-5. Flutter sends `START`
+3. Flutter sends calibration `CFG:*` values
+4. Flutter sends `FINISH:<S/Q/E/L/R/U/OFF>`
+5. Flutter sends `PATH:<node list>`
+6. Flutter sends `ROUTE:<commands>`
+7. Flutter sends `START`
 
 Only `START` should make the robot begin line traversal.
 
@@ -112,12 +131,18 @@ Back to Manual or Stop must send:
 Firmware accepts:
 
 - `LINE`: traversal-ready only, does not drive
-- `PATH:42,38,32,29`: loads path nodes
-- `ROUTE:SSX`: loads route actions
+- `PATH:1,2,4,5,10,12,14,16,17,21`: loads path nodes
+- `ROUTE:SRLEESSLRX`: loads route actions
+- `FINISH:L`: final `X` exits from the final node using the given action before stopping
+- `FINISH:OFF`: final `X` stops at the final node
 - `START`: starts line traversal
 - `S`: stop and return manual
 - `MANUAL`: stop and return manual
 - `CFG:CATCHTURN=<value>`: slower catch-turn pivot speed after blind turn time
+- `CFG:STURN=<value>`: shallow turn blind pivot speed
+- `CFG:SMINTURN=<value>`: shallow turn minimum blind pivot time
+- `CFG:NODEBLACK=<value>`: minimum black sensor count for node blocks
+- `CFG:LINEMAX=<value>`: maximum black sensor count accepted as a normal line during turn catch
 
 Firmware emits traversal logs:
 
@@ -128,16 +153,21 @@ Firmware emits traversal logs:
 - `CMD:<S/L/R/U/X>`
 - `STATE:NODE`
 - `STATE:STRAIGHT`
+- `STATE:TURN_LEFT_SHALLOW`
+- `STATE:TURN_RIGHT_SHALLOW`
 - `STATE:TURN_LEFT`
 - `STATE:TURN_RIGHT`
 - `STATE:TURN_CATCH`
 - `STATE:UTURN`
+- `STATE:FINISH_EXIT_<action>`
 - `STATE:FINAL_NODE`
 - `STATE:FINISHED`
 
 Route commands mean:
 
 - `S`: go straight through node
+- `Q`: shallow left turn
+- `E`: shallow right turn
 - `L`: turn left
 - `R`: turn right
 - `U`: U-turn
@@ -146,17 +176,17 @@ Route commands mean:
 Turn handling is two-speed:
 
 1. Drive forward using `NODEFWD` with detection disabled.
-2. Blind rotate using `TURN` until `MINTURN` has elapsed.
+2. Blind rotate using `TURN`/`STURN` until `MINTURN`/`SMINTURN` has elapsed.
 3. Slow catch rotate using `CATCHTURN`.
-4. Accept the new line once center sensors are stable for `STABLEMS`.
+4. Accept the new line once center sensors are stable for `STABLEMS` and the reading is a normal line band, not a full-black node.
 
-Node detection is transition-based, not broad black-count-based:
+Node detection for the current map is black-block-based:
 
-1. The middle sensors D3-D6 must first have a stable adjacent black pair.
-2. A node candidate is then a confirmed middle loss (`D3-D6` has 0-1 black sensors) or an expected branch pattern.
-3. Right turns can accept right-heavy branch patterns like `00000011`, `00000111`, `00001111` in firmware order.
-4. Left turns can accept left-heavy branch patterns like `11000000`, `11100000`, `11110000` in firmware order.
-5. The candidate must persist for `LOSTMS`, and cooldown/node lock prevents repeated node detections.
+1. A 3 cm line should usually produce about 3-4 black sensors.
+2. A 10 cm black node should usually produce 6-8 black sensors.
+3. Firmware detects node candidates with `blackCount >= NODEBLACK`.
+4. Turn catch ignores full-black node readings and accepts only centered line-band readings.
+5. Cooldown/node lock prevents repeated node detections while exiting a node block.
 
 ## Sensor Telemetry
 
@@ -225,7 +255,7 @@ arduino-cli upload -p /dev/ttyUSB0 --fqbn arduino:avr:nano /home/eru/robot_bt_ma
 Safe no-drive serial smoke test:
 
 ```bash
-/bin/bash -lc 'stty -F /dev/ttyUSB0 9600 raw -echo; timeout 8 cat /dev/ttyUSB0 & reader=$!; sleep 3; printf "LINE\nPATH:42,38,32,29\nROUTE:SSX\nS\n" > /dev/ttyUSB0; wait $reader'
+/bin/bash -lc 'stty -F /dev/ttyUSB0 9600 raw -echo; timeout 8 cat /dev/ttyUSB0 & reader=$!; sleep 3; printf "LINE\nFINISH:L\nPATH:1,2,4,5,10,12,14,16,17,21\nROUTE:SRLEESSLRX\nS\n" > /dev/ttyUSB0; wait $reader'
 ```
 
 Expected smoke-test response includes:
@@ -234,8 +264,9 @@ Expected smoke-test response includes:
 STATE:LINE
 OK:LINE
 SENS:...
-OK:PATH=42,38,32,29
-OK:ROUTE=SSX
+OK:FINISH=L
+OK:PATH=1,2,4,5,10,12,14,16,17,21
+OK:ROUTE=SRLEESSLRX
 STATE:MANUAL
 OK:MANUAL
 ```
@@ -253,6 +284,16 @@ Do not send `START` in a smoke test unless the robot is physically safe to move.
 - Traversal sensor UI should default to showing raw values.
 - Manual telemetry should stay minimal to avoid control lag.
 - Visible traversal log should prioritize route and node events, not raw sensor spam.
+
+## Later Classmates Support Context
+
+- After the main Nano + HC-05 app/firmware is stable, help create simpler reusable guidance for classmates.
+- Most classmates use digital 5-sensor line modules, not analog 8-sensor arrays.
+- Digital sensor modules are calibrated with onboard potentiometers; firmware should normalize reads so `1` means black and `0` means white.
+- Shared guidance should separate the robot core from the transport layer:
+  - Arduino UNO/Nano + HC-05 can read the common command protocol over Serial.
+  - ESP32 can expose Wi-Fi/web controls that send the same command protocol.
+- Keep this support secondary until the current Flutter app, 21-node map, and Nano firmware traversal are working.
 
 ## Agent Safety Rules
 

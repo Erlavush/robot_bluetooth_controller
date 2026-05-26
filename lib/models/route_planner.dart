@@ -3,10 +3,15 @@ import 'dart:math' as math;
 import 'robot_graph.dart';
 
 class RoutePlan {
-  const RoutePlan({required this.path, required this.commands});
+  const RoutePlan({
+    required this.path,
+    required this.commands,
+    this.finishAction,
+  });
 
   final List<int> path;
   final List<String> commands;
+  final String? finishAction;
 
   bool get isValid => path.isNotEmpty && commands.isNotEmpty;
 }
@@ -14,19 +19,38 @@ class RoutePlan {
 class RoutePlanner {
   const RoutePlanner._();
 
+  static const Set<String> validRouteCommands = {
+    'S',
+    'Q',
+    'E',
+    'L',
+    'R',
+    'U',
+    'X',
+  };
+
   static RoutePlan calculate({
     required int previousNode,
     required int startNode,
     required int destinationNode,
+    bool preferLongest = false,
+    bool finishExit = false,
   }) {
-    final path = shortestPath(startNode, destinationNode);
+    final path = preferLongest
+        ? longestSimplePath(startNode, destinationNode)
+        : shortestPath(startNode, destinationNode);
     if (path.isEmpty) {
       return const RoutePlan(path: [], commands: []);
     }
 
+    final finishAction = finishExit && path.length >= 2
+        ? turnCommand(path[path.length - 2], path.last, finishGuideNode)
+        : null;
+
     return RoutePlan(
       path: path,
       commands: generateCommands(previousNode, path),
+      finishAction: finishAction,
     );
   }
 
@@ -93,6 +117,40 @@ class RoutePlanner {
     return path;
   }
 
+  static List<int> longestSimplePath(int start, int end) {
+    if (!graphNodes.containsKey(start) || !graphNodes.containsKey(end)) {
+      return [];
+    }
+
+    var bestDistance = double.negativeInfinity;
+    var bestPath = <int>[];
+
+    void visit(int current, Set<int> visited, List<int> path, double distance) {
+      if (current == end) {
+        if (distance > bestDistance) {
+          bestDistance = distance;
+          bestPath = List<int>.from(path);
+        }
+        return;
+      }
+
+      for (final next in graphAdjacency[current] ?? const <int>[]) {
+        if (visited.contains(next)) {
+          continue;
+        }
+
+        visited.add(next);
+        path.add(next);
+        visit(next, visited, path, distance + edgeDistance(current, next));
+        path.removeLast();
+        visited.remove(next);
+      }
+    }
+
+    visit(start, {start}, [start], 0);
+    return bestPath;
+  }
+
   static List<String> generateCommands(int previousNode, List<int> path) {
     if (path.isEmpty) {
       return [];
@@ -114,9 +172,9 @@ class RoutePlanner {
   }
 
   static String turnCommand(int previous, int current, int next) {
-    final a = graphNodes[previous]!;
-    final b = graphNodes[current]!;
-    final c = graphNodes[next]!;
+    final a = graphPointFor(previous);
+    final b = graphPointFor(current);
+    final c = graphPointFor(next);
 
     final v1 = b - a;
     final v2 = c - b;
@@ -131,12 +189,28 @@ class RoutePlanner {
     final clampedDot = dot.clamp(-1.0, 1.0).toDouble();
     final angle = math.acos(clampedDot) * 180 / math.pi;
 
-    if (angle < 35) {
+    if (angle < 25) {
       return 'S';
     }
-    if (angle > 145) {
+    if (angle > 155) {
       return 'U';
     }
+    if (angle < 65) {
+      return cross > 0 ? 'E' : 'Q';
+    }
     return cross > 0 ? 'R' : 'L';
+  }
+
+  static String commandLabel(String command) {
+    return switch (command) {
+      'S' => 'S',
+      'Q' => 'Q shallow left',
+      'E' => 'E shallow right',
+      'L' => 'L left',
+      'R' => 'R right',
+      'U' => 'U turn',
+      'X' => 'X stop',
+      _ => command,
+    };
   }
 }

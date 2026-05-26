@@ -26,6 +26,10 @@ class _CalibrationUndo {
   final double previousValue;
 }
 
+enum _RouteSetupMode { showcase, manual }
+
+enum _ShowcaseRouteType { shortest, longest }
+
 class _TraversalScreenState extends State<TraversalScreen>
     with SingleTickerProviderStateMixin {
   static const _calibrationPrefsPrefix = 'traversal_calibration.';
@@ -36,6 +40,7 @@ class _TraversalScreenState extends State<TraversalScreen>
       'baseSpeed',
       'slowSpeed',
       'turnSpeed',
+      'shallowTurnSpeed',
       'catchTurnSpeed',
       'minPivot',
       'minPwm',
@@ -45,6 +50,7 @@ class _TraversalScreenState extends State<TraversalScreen>
       'nodePause',
       'nodeForward',
       'minTurn',
+      'shallowMinTurn',
       'stableMs',
       'afterTurn',
       'turnTimeout',
@@ -56,6 +62,8 @@ class _TraversalScreenState extends State<TraversalScreen>
       'kp',
       'leftTrim',
       'rightTrim',
+      'nodeBlackMin',
+      'lineBlackMax',
       'lostMs',
       'telemetryMs',
     ],
@@ -67,11 +75,14 @@ class _TraversalScreenState extends State<TraversalScreen>
   late final Map<String, double> _calibration;
   late final Map<String, double> _savedCalibration;
 
+  _RouteSetupMode _routeMode = _RouteSetupMode.showcase;
+  _ShowcaseRouteType _showcaseRouteType = _ShowcaseRouteType.shortest;
   GraphEdge? _selectedEdge;
   List<int>? _direction;
   int? _destination;
   List<int> _currentPath = [];
   List<String> _commands = [];
+  String? _finishAction;
   bool _running = false;
   bool _calibrationOpen = false;
   String _calibrationGroup = 'Drive';
@@ -319,7 +330,7 @@ class _TraversalScreenState extends State<TraversalScreen>
     }
 
     final scale = math.max(
-      0.58,
+      0.22,
       math.min(
         1.15,
         math.max(
@@ -337,7 +348,7 @@ class _TraversalScreenState extends State<TraversalScreen>
 
   void _zoom(double factor) {
     final current = _mapController.value.getMaxScaleOnAxis();
-    final next = (current * factor).clamp(0.58, 4.0).toDouble();
+    final next = (current * factor).clamp(0.22, 4.0).toDouble();
     _mapController.value = Matrix4.diagonal3Values(next, next, 1);
   }
 
@@ -348,10 +359,12 @@ class _TraversalScreenState extends State<TraversalScreen>
     }
 
     setState(() {
+      _routeMode = _RouteSetupMode.manual;
       _selectedEdge = edge;
       _direction = null;
       _currentPath = [];
       _commands = [];
+      _finishAction = null;
     });
   }
 
@@ -362,9 +375,11 @@ class _TraversalScreenState extends State<TraversalScreen>
     }
 
     setState(() {
+      _routeMode = _RouteSetupMode.manual;
       _destination = node;
       _currentPath = [];
       _commands = [];
+      _finishAction = null;
     });
   }
 
@@ -379,37 +394,87 @@ class _TraversalScreenState extends State<TraversalScreen>
       _destination = null;
       _currentPath = [];
       _commands = [];
+      _finishAction = null;
       _robotVisible = false;
       _robotPosition = null;
       _currentNode = null;
     });
   }
 
-  void _calculateRoute() {
-    final direction = _direction;
-    final destination = _destination;
-    if (direction == null || destination == null) {
-      _showMessage('Select edge direction and destination first');
+  void _setRouteMode(_RouteSetupMode mode) {
+    if (_running) {
+      _showMessage('Stop traversal first');
       return;
     }
 
-    final plan = RoutePlanner.calculate(
-      previousNode: direction[0],
-      startNode: direction[1],
-      destinationNode: destination,
-    );
+    setState(() {
+      _routeMode = mode;
+      _currentPath = [];
+      _commands = [];
+      _finishAction = null;
+      _robotVisible = false;
+      _robotPosition = null;
+      _currentNode = null;
+    });
+  }
+
+  void _setShowcaseRouteType(_ShowcaseRouteType type) {
+    if (_running) {
+      _showMessage('Stop traversal first');
+      return;
+    }
+
+    setState(() {
+      _showcaseRouteType = type;
+      _currentPath = [];
+      _commands = [];
+      _finishAction = null;
+    });
+  }
+
+  void _calculateRoute() {
+    final RoutePlan plan;
+    final int previousNode;
+    final int startNode;
+    if (_routeMode == _RouteSetupMode.showcase) {
+      previousNode = startGuideNode;
+      startNode = showcaseStartNode;
+      plan = RoutePlanner.calculate(
+        previousNode: previousNode,
+        startNode: startNode,
+        destinationNode: showcaseFinishNode,
+        preferLongest: _showcaseRouteType == _ShowcaseRouteType.longest,
+        finishExit: true,
+      );
+    } else {
+      final direction = _direction;
+      final destination = _destination;
+      if (direction == null || destination == null) {
+        _showMessage('Select edge direction and destination first');
+        return;
+      }
+
+      previousNode = direction[0];
+      startNode = direction[1];
+      plan = RoutePlanner.calculate(
+        previousNode: previousNode,
+        startNode: startNode,
+        destinationNode: destination,
+      );
+    }
 
     if (!plan.isValid) {
       _showMessage('No path found');
       return;
     }
 
-    final start = graphNodes[direction[1]]!;
+    final start = graphNodes[startNode]!;
     setState(() {
       _currentPath = plan.path;
       _commands = plan.commands;
+      _finishAction = plan.finishAction;
       _robotPosition = start;
-      _robotAngle = angleBetweenNodes(direction[0], direction[1]);
+      _robotAngle = angleBetweenNodes(previousNode, startNode);
       _robotVisible = true;
       _currentNode = null;
     });
@@ -427,6 +492,7 @@ class _TraversalScreenState extends State<TraversalScreen>
     await _bluetooth.sendCommandSequence(['S', 'LINE']);
     await _sendCalibrationProfile();
     await _bluetooth.sendCommandSequence([
+      'FINISH:${_finishAction ?? 'OFF'}',
       'PATH:${_currentPath.join(',')}',
       'ROUTE:${_commands.join()}',
       'START',
@@ -456,13 +522,11 @@ class _TraversalScreenState extends State<TraversalScreen>
   }
 
   bool get _routeValid {
-    return _direction != null &&
-        _destination != null &&
-        _currentPath.isNotEmpty &&
+    return _currentPath.isNotEmpty &&
         _commands.isNotEmpty &&
-        _commands.every(
-          (command) => {'S', 'L', 'R', 'U', 'X'}.contains(command),
-        );
+        _commands.every(RoutePlanner.validRouteCommands.contains) &&
+        (_finishAction == null ||
+            RoutePlanner.validRouteCommands.contains(_finishAction));
   }
 
   bool get _confirmEnabled {
@@ -485,6 +549,7 @@ class _TraversalScreenState extends State<TraversalScreen>
       _direction = forward ? [edge.a, edge.b] : [edge.b, edge.a];
       _currentPath = [];
       _commands = [];
+      _finishAction = null;
     });
   }
 
@@ -666,8 +731,12 @@ class _TraversalScreenState extends State<TraversalScreen>
                     return NodeMap(
                       transformationController: _mapController,
                       selectedEdge: _selectedEdge,
-                      direction: _direction,
-                      destination: _destination,
+                      direction: _routeMode == _RouteSetupMode.showcase
+                          ? const [startGuideNode, showcaseStartNode]
+                          : _direction,
+                      destination: _routeMode == _RouteSetupMode.showcase
+                          ? showcaseFinishNode
+                          : _destination,
                       path: _currentPath,
                       currentNode: _currentNode,
                       robotPosition: _robotPosition,
@@ -718,6 +787,123 @@ class _TraversalScreenState extends State<TraversalScreen>
     );
   }
 
+  Widget _buildRouteModeSection() {
+    return _PanelSection(
+      title: 'Route Mode',
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _MiniButton(
+                label: 'SHOWCASE',
+                green: _routeMode == _RouteSetupMode.showcase,
+                onPressed: () => _setRouteMode(_RouteSetupMode.showcase),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _MiniButton(
+                label: 'MANUAL',
+                green: _routeMode == _RouteSetupMode.manual,
+                onPressed: () => _setRouteMode(_RouteSetupMode.manual),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildShowcaseSelectionSection() {
+    return _PanelSection(
+      title: 'Showcase Route',
+      children: [
+        const _KeyValue(label: 'Start', value: 'START -> 1'),
+        const _KeyValue(label: 'Finish', value: '21 -> FINISH'),
+        Row(
+          children: [
+            Expanded(
+              child: _MiniButton(
+                label: 'SHORTEST',
+                green: _showcaseRouteType == _ShowcaseRouteType.shortest,
+                onPressed: () =>
+                    _setShowcaseRouteType(_ShowcaseRouteType.shortest),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _MiniButton(
+                label: 'LONGEST',
+                green: _showcaseRouteType == _ShowcaseRouteType.longest,
+                onPressed: () =>
+                    _setShowcaseRouteType(_ShowcaseRouteType.longest),
+              ),
+            ),
+          ],
+        ),
+        _MiniButton(
+          label: 'CALCULATE ROUTE',
+          green: true,
+          onPressed: _calculateRoute,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildManualSelectionSection() {
+    return _PanelSection(
+      title: 'Manual Placement',
+      children: [
+        _KeyValue(
+          label: 'Start edge',
+          value: _selectedEdge == null
+              ? 'None'
+              : '${_selectedEdge!.a} - ${_selectedEdge!.b}',
+        ),
+        _KeyValue(
+          label: 'Facing into',
+          value: _direction == null
+              ? 'None'
+              : '${_direction![0]} -> ${_direction![1]}',
+        ),
+        _KeyValue(
+          label: 'Destination',
+          value: _destination?.toString() ?? 'None',
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _MiniButton(
+                label: _selectedEdge == null
+                    ? 'A -> B'
+                    : '${_selectedEdge!.a} -> ${_selectedEdge!.b}',
+                onPressed: _selectedEdge == null
+                    ? null
+                    : () => _setDirectionForward(true),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _MiniButton(
+                label: _selectedEdge == null
+                    ? 'B -> A'
+                    : '${_selectedEdge!.b} -> ${_selectedEdge!.a}',
+                onPressed: _selectedEdge == null
+                    ? null
+                    : () => _setDirectionForward(false),
+              ),
+            ),
+          ],
+        ),
+        _MiniButton(
+          label: 'CALCULATE ROUTE',
+          green: true,
+          onPressed: _calculateRoute,
+        ),
+      ],
+    );
+  }
+
   Widget _buildControlCard() {
     return _BorderCard(
       child: Padding(
@@ -733,57 +919,11 @@ class _TraversalScreenState extends State<TraversalScreen>
                 ),
               ),
               const SizedBox(height: 12),
-              _PanelSection(
-                title: 'Selection',
-                children: [
-                  _KeyValue(
-                    label: 'Starting edge',
-                    value: _selectedEdge == null
-                        ? 'None'
-                        : '${_selectedEdge!.a} - ${_selectedEdge!.b}',
-                  ),
-                  _KeyValue(
-                    label: 'Direction',
-                    value: _direction == null
-                        ? 'None'
-                        : '${_direction![0]} -> ${_direction![1]}',
-                  ),
-                  _KeyValue(
-                    label: 'Destination',
-                    value: _destination?.toString() ?? 'None',
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _MiniButton(
-                          label: _selectedEdge == null
-                              ? 'A -> B'
-                              : '${_selectedEdge!.a} -> ${_selectedEdge!.b}',
-                          onPressed: _selectedEdge == null
-                              ? null
-                              : () => _setDirectionForward(true),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _MiniButton(
-                          label: _selectedEdge == null
-                              ? 'B -> A'
-                              : '${_selectedEdge!.b} -> ${_selectedEdge!.a}',
-                          onPressed: _selectedEdge == null
-                              ? null
-                              : () => _setDirectionForward(false),
-                        ),
-                      ),
-                    ],
-                  ),
-                  _MiniButton(
-                    label: 'CALCULATE ROUTE',
-                    green: true,
-                    onPressed: _calculateRoute,
-                  ),
-                ],
-              ),
+              _buildRouteModeSection(),
+              const SizedBox(height: 12),
+              _routeMode == _RouteSetupMode.showcase
+                  ? _buildShowcaseSelectionSection()
+                  : _buildManualSelectionSection(),
               const SizedBox(height: 12),
               _PanelSection(
                 title: 'Route Output',
@@ -796,13 +936,21 @@ class _TraversalScreenState extends State<TraversalScreen>
                   ),
                   _KeyValue(
                     label: 'Commands',
-                    value: _commands.isEmpty ? 'None' : _commands.join(' '),
+                    value: _commands.isEmpty
+                        ? 'None'
+                        : _commands.map(RoutePlanner.commandLabel).join(' | '),
+                  ),
+                  _KeyValue(
+                    label: 'Finish exit',
+                    value: _finishAction == null
+                        ? 'Off'
+                        : RoutePlanner.commandLabel(_finishAction!),
                   ),
                   _KeyValue(
                     label: 'Bluetooth',
                     value: _commands.isEmpty
                         ? 'None'
-                        : 'PATH:${_currentPath.join(',')} | ROUTE:${_commands.join()} | START',
+                        : 'FINISH:${_finishAction ?? 'OFF'} | PATH:${_currentPath.join(',')} | ROUTE:${_commands.join()} | START',
                   ),
                   _StartButton(
                     enabled: _confirmEnabled,

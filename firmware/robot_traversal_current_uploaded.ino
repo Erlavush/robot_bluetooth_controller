@@ -87,10 +87,10 @@ bool routeReady = false;
 bool routeRunning = false;
 bool routeFinished = false;
 bool nodeLocked = false;
+bool finishExitEnabled = false;
+char finishExitAction = 'S';
 
 unsigned long lastNodeTime = 0;
-unsigned long lastCenteredTime = 0;
-unsigned long lastMiddleStableTime = 0;
 unsigned long nodeCandidateStart = 0;
 
 unsigned long nodeCooldownMs = 450;
@@ -110,26 +110,18 @@ int telemetryIntervalMs = 140;
 
 // Slower pivot values
 int nodeTurnSpeed = 145;
+int shallowTurnSpeed = 120;
 int catchTurnSpeed = 105;
 int minPivotPwm = 125;
+int shallowMinTurnBeforeDetectMs = 180;
+int nodeBlackMinCount = 6;
+int lineBlackMinCount = 2;
+int lineBlackMaxCount = 5;
 
 int lastLineDirection = 0;
 // -1 = left
 //  0 = center
 //  1 = right
-
-// ======================================================
-// SPECIAL NODE 2 RIGHT TURN SETTINGS
-// ======================================================
-int node2ValidateForwardMs = 120;
-int node2CenterForwardMs = 800;
-
-int node2MinTurnMs = 220;
-int node2TurnTimeoutMs = 2000;
-int node2StableCenterMs = 40;
-
-int node2TurnSpeed = 130;
-int node2MinPivotPwm = 115;
 
 // ======================================================
 // SENSOR GLOBALS
@@ -148,6 +140,7 @@ unsigned long lastTelemetryTime = 0;
 // FUNCTION PROTOTYPES
 // ======================================================
 void stopMotors();
+void hardBrakeMotors(int brakeMs);
 void setLedOff();
 void setLedRed();
 void setLedGreen();
@@ -160,6 +153,7 @@ void resetRouteProgress();
 void enterTraversalReady();
 void parsePathCommand(String pathText);
 void parseRouteCommand(String routeText);
+void parseFinishCommand(String finishText);
 void startRoute();
 bool routeStillActive();
 void nodePauseBlocking();
@@ -169,19 +163,19 @@ void updateLedMode();
 void readLineSensors();
 bool normalCenterDetected();
 bool centerDetected();
-bool leftEdgeDetected();
-bool rightEdgeDetected();
-int middleBlackCount();
+bool nodeBlockDetected();
+bool lineBandDetected();
+bool lineCenteredDetected();
 bool middleHasAdjacentBlackPair();
-bool rightBranchPattern();
-bool leftBranchPattern();
 bool possibleNodeDetected();
 void handleRouteNode();
-void executeNode2RightSpecial();
 void executeStraightNode();
+void executeShallowLeftTurnNode();
+void executeShallowRightTurnNode();
 void executeLeftTurnNode();
 void executeRightTurnNode();
 void executeUTurnNode();
+void executeFinishExitNode();
 
 // ======================================================
 // SETUP
@@ -334,6 +328,9 @@ void processCommand(String cmd) {
   } else if (cmd.startsWith("ROUTE:")) {
     parseRouteCommand(cmd.substring(6));
     return;
+  } else if (cmd.startsWith("FINISH:")) {
+    parseFinishCommand(cmd.substring(7));
+    return;
   } else if (cmd.startsWith("MLINE:")) {
     parseRouteCommand(cmd.substring(6));
     startRoute();
@@ -397,6 +394,7 @@ void processCommand(String cmd) {
     manualMovementActive = false;
     routeRunning = false;
     routeFinished = false;
+    finishExitEnabled = false;
     stopMotors();
     Serial.println("STATE:MANUAL");
     Serial.println("OK:MANUAL");
@@ -413,7 +411,6 @@ void processCommand(String cmd) {
     if (slowSpeed < 95) slowSpeed = 95;
 
     nodeTurnSpeed = constrain(speedValue - 10, 125, 170);
-    node2TurnSpeed = constrain(speedValue - 10, 125, 165);
 
     Serial.print("OK:SPD=");
     Serial.println(speedValue);
@@ -474,6 +471,7 @@ void processCommand(String cmd) {
     robotMode = "MANUAL";
     manualMovementActive = false;
     routeRunning = false;
+    finishExitEnabled = false;
     stopMotors();
 
     ledMode = "BLUE";
@@ -513,7 +511,8 @@ void processCommand(String cmd) {
         if (slowSpeed > speedValue) slowSpeed = speedValue;
       } else if (key == "TURN") {
         nodeTurnSpeed = constrain((int)val, 60, 255);
-        node2TurnSpeed = nodeTurnSpeed;
+      } else if (key == "STURN") {
+        shallowTurnSpeed = constrain((int)val, 40, 220);
       } else if (key == "CATCHTURN") {
         catchTurnSpeed = constrain((int)val, 40, 220);
       } else if (key == "SLOW") {
@@ -531,6 +530,8 @@ void processCommand(String cmd) {
         turnTimeoutMs = constrain((int)val, 200, 5000);
       } else if (key == "MINTURN") {
         minTurnBeforeDetectMs = constrain((int)val, 0, 2000);
+      } else if (key == "SMINTURN") {
+        shallowMinTurnBeforeDetectMs = constrain((int)val, 0, 1500);
       } else if (key == "AFTERTURN") {
         afterTurnForwardMs = constrain((int)val, 0, 2000);
       } else if (key == "FINALFWD") {
@@ -547,6 +548,10 @@ void processCommand(String cmd) {
         lineStableMs = constrain((int)val, 0, 1000);
       } else if (key == "LOSTMS") {
         lostConfirmMs = constrain((int)val, 0, 1000);
+      } else if (key == "NODEBLACK") {
+        nodeBlackMinCount = constrain((int)val, 4, 8);
+      } else if (key == "LINEMAX") {
+        lineBlackMaxCount = constrain((int)val, 3, 7);
       } else if (key == "TELMS") {
         telemetryIntervalMs = constrain((int)val, 80, 1000);
       } else if (key == "MCURVE") {
@@ -570,8 +575,6 @@ void resetRouteProgress() {
   routeFinished = false;
   nodeLocked = false;
   lastNodeTime = 0;
-  lastCenteredTime = 0;
-  lastMiddleStableTime = 0;
   nodeCandidateStart = 0;
   lastLineDirection = 0;
 }
@@ -626,7 +629,15 @@ void parseRouteCommand(String routeText) {
 
   for (int i = 0; i < routeText.length() && routeActionCount < MAX_ROUTE; i++) {
     char action = routeText.charAt(i);
-    if (action == 'S' || action == 'L' || action == 'R' || action == 'U' || action == 'X') {
+    if (
+      action == 'S' ||
+      action == 'Q' ||
+      action == 'E' ||
+      action == 'L' ||
+      action == 'R' ||
+      action == 'U' ||
+      action == 'X'
+    ) {
       routeActions[routeActionCount++] = action;
     }
   }
@@ -638,6 +649,42 @@ void parseRouteCommand(String routeText) {
     Serial.print(routeActions[i]);
   }
   Serial.println();
+}
+
+void parseFinishCommand(String finishText) {
+  finishText.trim();
+  finishText.toUpperCase();
+
+  if (finishText == "OFF" || finishText == "NONE" || finishText == "0") {
+    finishExitEnabled = false;
+    finishExitAction = 'S';
+    Serial.println(F("OK:FINISH=OFF"));
+    return;
+  }
+
+  if (finishText.length() == 0) {
+    finishExitEnabled = false;
+    Serial.println(F("ERR:FINISH_EMPTY"));
+    return;
+  }
+
+  char action = finishText.charAt(0);
+  if (
+    action == 'S' ||
+    action == 'Q' ||
+    action == 'E' ||
+    action == 'L' ||
+    action == 'R' ||
+    action == 'U'
+  ) {
+    finishExitEnabled = true;
+    finishExitAction = action;
+    Serial.print(F("OK:FINISH="));
+    Serial.println(finishExitAction);
+  } else {
+    finishExitEnabled = false;
+    Serial.println(F("ERR:FINISH_BAD"));
+  }
 }
 
 void startRoute() {
@@ -823,6 +870,22 @@ void stopMotors() {
   analogWrite(PWMB, 0);
 }
 
+void hardBrakeMotors(int brakeMs) {
+  // TB6612FNG short brake: IN1 and IN2 both HIGH while PWM is active
+  digitalWrite(AIN1, HIGH);
+  digitalWrite(AIN2, HIGH);
+  digitalWrite(BIN1, HIGH);
+  digitalWrite(BIN2, HIGH);
+
+  analogWrite(PWMA, 255);
+  analogWrite(PWMB, 255);
+
+  delay(brakeMs);
+
+  analogWrite(PWMA, 0);
+  analogWrite(PWMB, 0);
+}
+
 void driveForwardTimed(int durationMs, int spd) {
   unsigned long start = millis();
 
@@ -890,17 +953,6 @@ void pivotLeftTimedControl(int spd) {
 
 void pivotRightTimedControl(int spd) {
   if (spd < minPivotPwm) spd = minPivotPwm;
-  spd = constrain(spd, 0, 255);
-
-  setLeftForward();
-  setRightBackward();
-
-  analogWrite(PWMA, spd);
-  analogWrite(PWMB, spd);
-}
-
-void pivotRightNode2Control(int spd) {
-  if (spd < node2MinPivotPwm) spd = node2MinPivotPwm;
   spd = constrain(spd, 0, 255);
 
   setLeftForward();
@@ -1055,12 +1107,7 @@ void readLineSensors() {
     currentPosition = 0;
   }
 
-  if (normalCenterDetected()) {
-    lastCenteredTime = millis();
-  }
-
-  if (middleHasAdjacentBlackPair()) {
-    lastMiddleStableTime = millis();
+  if (middleHasAdjacentBlackPair() && !nodeBlockDetected()) {
     nodeCandidateStart = 0;
   }
 }
@@ -1081,21 +1128,16 @@ bool normalCenterDetected() {
   return centerDetected() && blackCount >= 2 && blackCount <= 4 && !outerBlack;
 }
 
-bool leftEdgeDetected() {
-  return (binarySensor[0] == 1 || binarySensor[1] == 1 || binarySensor[2] == 1);
+bool nodeBlockDetected() {
+  return blackCount >= nodeBlackMinCount;
 }
 
-bool rightEdgeDetected() {
-  return (binarySensor[5] == 1 || binarySensor[6] == 1 || binarySensor[7] == 1);
+bool lineBandDetected() {
+  return blackCount >= lineBlackMinCount && blackCount <= lineBlackMaxCount;
 }
 
-int middleBlackCount() {
-  int count = 0;
-  if (binarySensor[2] == 1) count++;
-  if (binarySensor[3] == 1) count++;
-  if (binarySensor[4] == 1) count++;
-  if (binarySensor[5] == 1) count++;
-  return count;
+bool lineCenteredDetected() {
+  return centerDetected() && lineBandDetected() && !nodeBlockDetected();
 }
 
 bool middleHasAdjacentBlackPair() {
@@ -1106,51 +1148,12 @@ bool middleHasAdjacentBlackPair() {
   );
 }
 
-bool rightBranchPattern() {
-  return (
-    (binarySensor[6] == 1 && binarySensor[7] == 1) ||
-    (binarySensor[5] == 1 && binarySensor[6] == 1 && binarySensor[7] == 1) ||
-    (binarySensor[4] == 1 && binarySensor[5] == 1 && binarySensor[6] == 1 && binarySensor[7] == 1)
-  );
-}
-
-bool leftBranchPattern() {
-  return (
-    (binarySensor[0] == 1 && binarySensor[1] == 1) ||
-    (binarySensor[0] == 1 && binarySensor[1] == 1 && binarySensor[2] == 1) ||
-    (binarySensor[0] == 1 && binarySensor[1] == 1 && binarySensor[2] == 1 && binarySensor[3] == 1)
-  );
-}
-
 bool possibleNodeDetected() {
   if (!routeRunning || routeIndex >= routeActionCount) return false;
 
   unsigned long now = millis();
-  char expectedAction = routeActions[routeIndex];
-  bool wasMiddleStableRecently =
-    lastMiddleStableTime > 0 && now - lastMiddleStableTime < 850;
 
-  if (!wasMiddleStableRecently) {
-    nodeCandidateStart = 0;
-    return false;
-  }
-
-  int middleCount = middleBlackCount();
-
-  bool centerLossNode = middleCount <= 1;
-  bool expectedRightBranch = expectedAction == 'R' && rightBranchPattern();
-  bool expectedLeftBranch = expectedAction == 'L' && leftBranchPattern();
-  bool expectedStopOrUTurn =
-    (expectedAction == 'X' || expectedAction == 'U') &&
-    (centerLossNode || (leftBranchPattern() && rightBranchPattern()));
-
-  bool nodeLike =
-    centerLossNode ||
-    expectedRightBranch ||
-    expectedLeftBranch ||
-    expectedStopOrUTurn;
-
-  if (!nodeLike) {
+  if (!nodeBlockDetected()) {
     nodeCandidateStart = 0;
     return false;
   }
@@ -1177,7 +1180,7 @@ void lineTraceMode() {
 
   readLineSensors();
 
-  if (nodeLocked && millis() - lastNodeTime > nodeUnlockMinMs && normalCenterDetected()) {
+  if (nodeLocked && millis() - lastNodeTime > nodeUnlockMinMs && lineCenteredDetected()) {
     nodeLocked = false;
   }
 
@@ -1241,6 +1244,11 @@ void handleRouteNode() {
 
   nodeLocked = true;
   lastNodeTime = millis();
+  nodeCandidateStart = 0;
+  lastLineDirection = 0;
+
+  // Active hard brake immediately to prevent physical coasting overlap
+  hardBrakeMotors(35);
 
   int nodeLabel = routeIndex < routeNodeCount ? routeNodes[routeIndex] : routeIndex + 1;
   char action = routeActions[routeIndex];
@@ -1262,7 +1270,11 @@ void handleRouteNode() {
 
   if (action == 'X') {
     Serial.println("STATE:FINAL_NODE");
-    driveForwardTimed(finalStopForwardMs, slowSpeed);
+    if (finishExitEnabled) {
+      executeFinishExitNode();
+    } else {
+      driveForwardTimed(finalStopForwardMs, slowSpeed);
+    }
 
     stopMotors();
     setLedWhite();
@@ -1273,10 +1285,12 @@ void handleRouteNode() {
     return;
   }
 
-  if (nodeLabel == 2 && action == 'R') {
-    executeNode2RightSpecial();
-  } else if (action == 'S') {
+  if (action == 'S') {
     executeStraightNode();
+  } else if (action == 'Q') {
+    executeShallowLeftTurnNode();
+  } else if (action == 'E') {
+    executeShallowRightTurnNode();
   } else if (action == 'L') {
     executeLeftTurnNode();
   } else if (action == 'R') {
@@ -1296,63 +1310,46 @@ void handleRouteNode() {
   }
 }
 
-// ======================================================
-// SPECIAL NODE 2 RIGHT TURN
-// ======================================================
-void executeNode2RightSpecial() {
-  Serial.println("STATE:TURN_RIGHT");
-  int usableForward = slowSpeed;
-  if (usableForward < 100) usableForward = 100;
-
-  int usableTurn = node2TurnSpeed;
-  if (usableTurn < node2MinPivotPwm) usableTurn = node2MinPivotPwm;
-
-  // 1. Small validation forward.
-  setLedCyan();
-  moveMotors(usableForward, usableForward);
-  delay(node2ValidateForwardMs);
-  stopMotors();
-  delay(80);
-
-  // 2. Move forward longer so the ROBOT CENTER reaches the node.
+void executeStraightNode() {
+  Serial.println("STATE:STRAIGHT");
   setLedGreen();
-  moveMotors(usableForward, usableForward);
-  delay(node2CenterForwardMs);
-  stopMotors();
-  delay(120);
 
-  // 3. Rotate right slowly until the new vertical line is centered.
-  setLedBlue();
+  driveForwardTimed(nodeStraightForwardMs, slowSpeed);
+  Serial.println("STATE:RESUME_LINE");
+}
 
-  unsigned long turnStart = millis();
+void executeShallowLeftTurnNode() {
+  Serial.println(F("STATE:TURN_LEFT_SHALLOW"));
+  setLedRed();
+
+  driveForwardTimed(nodeTurnForwardMs, slowSpeed);
+
+  unsigned long start = millis();
   unsigned long centerStart = 0;
   bool catchLogged = false;
 
-  while (millis() - turnStart < node2TurnTimeoutMs) {
+  while (millis() - start < turnTimeoutMs) {
     readBluetooth();
-    if (robotMode != "LINE" || !routeRunning) {
+    if (!routeStillActive()) {
       stopMotors();
       return;
     }
-    bool detectionAllowed = millis() - turnStart > node2MinTurnMs;
+    bool detectionAllowed = millis() - start > (unsigned long)shallowMinTurnBeforeDetectMs;
     if (detectionAllowed && !catchLogged) {
-      Serial.println("STATE:TURN_CATCH");
+      Serial.println(F("STATE:TURN_CATCH"));
       catchLogged = true;
     }
-    pivotRightNode2Control(detectionAllowed ? catchTurnSpeed : usableTurn);
+    pivotLeftTimedControl(detectionAllowed ? catchTurnSpeed : shallowTurnSpeed);
     readLineSensors();
 
-    if (detectionAllowed && centerDetected()) {
-      if (centerStart == 0) {
-        centerStart = millis();
-      }
+    if (detectionAllowed && lineCenteredDetected()) {
+      if (centerStart == 0) centerStart = millis();
 
-      if (millis() - centerStart >= node2StableCenterMs) {
+      if (millis() - centerStart >= (unsigned long)lineStableMs) {
         stopMotors();
-        delay(100);
+        delay(80);
 
-        moveMotors(speedValue, speedValue);
-        delay(afterTurnForwardMs);
+        driveForwardTimed(afterTurnForwardMs, speedValue);
         return;
       }
     } else {
@@ -1361,14 +1358,50 @@ void executeNode2RightSpecial() {
   }
 
   stopMotors();
+  Serial.println(F("WARN:TURN_LEFT_SHALLOW_TIMEOUT"));
 }
 
-void executeStraightNode() {
-  Serial.println("STATE:STRAIGHT");
-  setLedGreen();
+void executeShallowRightTurnNode() {
+  Serial.println(F("STATE:TURN_RIGHT_SHALLOW"));
+  setLedBlue();
 
-  driveForwardTimed(nodeStraightForwardMs, slowSpeed);
-  Serial.println("STATE:RESUME_LINE");
+  driveForwardTimed(nodeTurnForwardMs, slowSpeed);
+
+  unsigned long start = millis();
+  unsigned long centerStart = 0;
+  bool catchLogged = false;
+
+  while (millis() - start < turnTimeoutMs) {
+    readBluetooth();
+    if (!routeStillActive()) {
+      stopMotors();
+      return;
+    }
+    bool detectionAllowed = millis() - start > (unsigned long)shallowMinTurnBeforeDetectMs;
+    if (detectionAllowed && !catchLogged) {
+      Serial.println(F("STATE:TURN_CATCH"));
+      catchLogged = true;
+    }
+    pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : shallowTurnSpeed);
+    readLineSensors();
+
+    if (detectionAllowed && lineCenteredDetected()) {
+      if (centerStart == 0) centerStart = millis();
+
+      if (millis() - centerStart >= (unsigned long)lineStableMs) {
+        stopMotors();
+        delay(80);
+
+        driveForwardTimed(afterTurnForwardMs, speedValue);
+        return;
+      }
+    } else {
+      centerStart = 0;
+    }
+  }
+
+  stopMotors();
+  Serial.println(F("WARN:TURN_RIGHT_SHALLOW_TIMEOUT"));
 }
 
 void executeLeftTurnNode() {
@@ -1395,7 +1428,7 @@ void executeLeftTurnNode() {
     pivotLeftTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (detectionAllowed && centerDetected()) {
+    if (detectionAllowed && lineCenteredDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {
@@ -1438,7 +1471,7 @@ void executeRightTurnNode() {
     pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (detectionAllowed && centerDetected()) {
+    if (detectionAllowed && lineCenteredDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {
@@ -1483,7 +1516,7 @@ void executeUTurnNode() {
     pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
     readLineSensors();
 
-    if (detectionAllowed && centerDetected()) {
+    if (detectionAllowed && lineCenteredDetected()) {
       if (centerStart == 0) centerStart = millis();
 
       if (millis() - centerStart >= (unsigned long)lineStableMs) {
@@ -1500,4 +1533,25 @@ void executeUTurnNode() {
 
   stopMotors();
   Serial.println("WARN:UTURN_TIMEOUT");
+}
+
+void executeFinishExitNode() {
+  Serial.print(F("STATE:FINISH_EXIT_"));
+  Serial.println(finishExitAction);
+
+  if (finishExitAction == 'S') {
+    executeStraightNode();
+  } else if (finishExitAction == 'Q') {
+    executeShallowLeftTurnNode();
+  } else if (finishExitAction == 'E') {
+    executeShallowRightTurnNode();
+  } else if (finishExitAction == 'L') {
+    executeLeftTurnNode();
+  } else if (finishExitAction == 'R') {
+    executeRightTurnNode();
+  } else if (finishExitAction == 'U') {
+    executeUTurnNode();
+  }
+
+  driveForwardTimed(finalStopForwardMs, slowSpeed);
 }
