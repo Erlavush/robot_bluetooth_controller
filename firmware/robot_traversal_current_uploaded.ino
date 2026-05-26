@@ -216,9 +216,9 @@ void setup() {
   ledMode = "BLUE";
   setLedBlue();
 
-  Serial.println("==================================================");
-  Serial.println("Hardware Serial Robot Controller Ready!");
-  Serial.println("==================================================");
+  Serial.println(F("=================================================="));
+  Serial.println(F("Hardware Serial Robot Controller Ready!"));
+  Serial.println(F("=================================================="));
 }
 
 // ======================================================
@@ -345,50 +345,50 @@ void processCommand(String cmd) {
     robotMode = "MANUAL";
     markManualMovementActive();
     moveForward();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "B") {
     robotMode = "MANUAL";
     markManualMovementActive();
     moveBackward();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "L") {
     robotMode = "MANUAL";
     markManualMovementActive();
     rotateLeft();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "R") {
     robotMode = "MANUAL";
     markManualMovementActive();
     rotateRight();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "G") {
     robotMode = "MANUAL";
     markManualMovementActive();
     forwardLeft();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "I") {
     robotMode = "MANUAL";
     markManualMovementActive();
     forwardRight();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "H") {
     robotMode = "MANUAL";
     markManualMovementActive();
     backwardLeft();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "J") {
     robotMode = "MANUAL";
     markManualMovementActive();
     backwardRight();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "S") {
     robotMode = "MANUAL";
     manualMovementActive = false;
@@ -396,8 +396,8 @@ void processCommand(String cmd) {
     routeFinished = false;
     finishExitEnabled = false;
     stopMotors();
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   }
 
   // ---------------- SPEED COMMAND ----------------
@@ -412,7 +412,7 @@ void processCommand(String cmd) {
 
     nodeTurnSpeed = constrain(speedValue - 10, 125, 170);
 
-    Serial.print("OK:SPD=");
+    Serial.print(F("OK:SPD="));
     Serial.println(speedValue);
   }
 
@@ -420,50 +420,50 @@ void processCommand(String cmd) {
   else if (cmd == "CRED" || cmd == "RED") {
     ledMode = "RED";
     setLedRed();
-    Serial.println("OK:LED=RED");
+    Serial.println(F("OK:LED=RED"));
   } else if (cmd == "CGREEN" || cmd == "GREEN") {
     ledMode = "GREEN";
     setLedGreen();
-    Serial.println("OK:LED=GREEN");
+    Serial.println(F("OK:LED=GREEN"));
   } else if (cmd == "CBLUE" || cmd == "BLUE") {
     ledMode = "BLUE";
     setLedBlue();
-    Serial.println("OK:LED=BLUE");
+    Serial.println(F("OK:LED=BLUE"));
   } else if (cmd == "CPINK" || cmd == "PINK") {
     ledMode = "PINK";
     setLedPink();
-    Serial.println("OK:LED=PINK");
+    Serial.println(F("OK:LED=PINK"));
   } else if (cmd == "CCYAN" || cmd == "CYAN") {
     ledMode = "CYAN";
     setLedCyan();
-    Serial.println("OK:LED=CYAN");
+    Serial.println(F("OK:LED=CYAN"));
   } else if (cmd == "CYELLOW" || cmd == "YELLOW") {
     ledMode = "YELLOW";
     setLedYellow();
-    Serial.println("OK:LED=YELLOW");
+    Serial.println(F("OK:LED=YELLOW"));
   } else if (cmd == "CWHITE" || cmd == "WHITE") {
     ledMode = "WHITE";
     setLedWhite();
-    Serial.println("OK:LED=WHITE");
+    Serial.println(F("OK:LED=WHITE"));
   } else if (cmd == "COFF" || cmd == "OFF") {
     ledMode = "OFF";
     setLedOff();
-    Serial.println("OK:LED=OFF");
+    Serial.println(F("OK:LED=OFF"));
   } else if (cmd == "CPOLICE" || cmd == "POLICE") {
     ledMode = "POLICE";
     ledStep = 0;
     lastLedUpdate = 0;
-    Serial.println("OK:LED=POLICE");
+    Serial.println(F("OK:LED=POLICE"));
   } else if (cmd == "CRAINBOW" || cmd == "RAINBOW") {
     ledMode = "RAINBOW";
     ledStep = 0;
     lastLedUpdate = 0;
-    Serial.println("OK:LED=RAINBOW");
+    Serial.println(F("OK:LED=RAINBOW"));
   } else if (cmd == "CRANDOM" || cmd == "RANDOM") {
     ledMode = "RANDOM";
     ledStep = 0;
     lastLedUpdate = 0;
-    Serial.println("OK:LED=RANDOM");
+    Serial.println(F("OK:LED=RANDOM"));
   }
 
   // ---------------- MODE COMMANDS ----------------
@@ -477,20 +477,20 @@ void processCommand(String cmd) {
     ledMode = "BLUE";
     setLedBlue();
 
-    Serial.println("STATE:MANUAL");
-    Serial.println("OK:MANUAL");
+    Serial.println(F("STATE:MANUAL"));
+    Serial.println(F("OK:MANUAL"));
   } else if (cmd == "MLINE" || cmd == "LINE") {
     enterTraversalReady();
   }
 
   // ---------------- UTILITY COMMANDS ----------------
   else if (cmd == "PING") {
-    Serial.println("OK:PING");
+    Serial.println(F("OK:PING"));
   } else if (cmd == "GETSENS") {
     // One-time query responds to satisfy the watchdog in manual mode
     sendTelemetry();
   } else if (cmd == "TEL:RAW" || cmd == "TEL:COMPACT") {
-    Serial.println("OK:TEL=RAW");
+    Serial.println(F("OK:TEL=RAW"));
   }
 
   // ---------------- CONFIGURATION COMMANDS ----------------
@@ -557,14 +557,14 @@ void processCommand(String cmd) {
       } else if (key == "MCURVE") {
         manualCurvePercent = constrain((int)val, 35, 90);
       } else {
-        Serial.print("ERR:CFG_UNKNOWN=");
+        Serial.print(F("ERR:CFG_UNKNOWN="));
         Serial.println(key);
         return;
       }
       
-      Serial.print("CFG:");
+      Serial.print(F("CFG:"));
       Serial.print(key);
-      Serial.print("=");
+      Serial.print(F("="));
       Serial.println(valStr);
     }
   }
@@ -590,8 +590,8 @@ void enterTraversalReady() {
   ledMode = "LINE_DIAGNOSTIC";
   setLedGreen();
 
-  Serial.println("STATE:LINE");
-  Serial.println("OK:LINE");
+  Serial.println(F("STATE:LINE"));
+  Serial.println(F("OK:LINE"));
   sendTelemetry();
 }
 
@@ -616,7 +616,7 @@ void parsePathCommand(String pathText) {
 
   routeReady = routeNodeCount > 0 && routeActionCount > 0;
 
-  Serial.print("OK:PATH=");
+  Serial.print(F("OK:PATH="));
   for (byte i = 0; i < routeNodeCount; i++) {
     if (i > 0) Serial.print(',');
     Serial.print(routeNodes[i]);
@@ -644,7 +644,7 @@ void parseRouteCommand(String routeText) {
 
   routeReady = routeNodeCount > 0 && routeActionCount > 0;
 
-  Serial.print("OK:ROUTE=");
+  Serial.print(F("OK:ROUTE="));
   for (byte i = 0; i < routeActionCount; i++) {
     Serial.print(routeActions[i]);
   }
@@ -692,7 +692,7 @@ void startRoute() {
     routeRunning = false;
     routeReady = false;
     stopMotors();
-    Serial.println("ERR:ROUTE_EMPTY");
+    Serial.println(F("ERR:ROUTE_EMPTY"));
     return;
   }
 
@@ -700,7 +700,7 @@ void startRoute() {
     routeRunning = false;
     routeReady = false;
     stopMotors();
-    Serial.println("ERR:PATH_EMPTY");
+    Serial.println(F("ERR:PATH_EMPTY"));
     return;
   }
 
@@ -713,8 +713,8 @@ void startRoute() {
   ledMode = "LINE_DIAGNOSTIC";
   setLedGreen();
 
-  Serial.println("STATE:ROUTE");
-  Serial.println("OK:START");
+  Serial.println(F("STATE:ROUTE"));
+  Serial.println(F("OK:START"));
 }
 
 // ======================================================
@@ -913,7 +913,7 @@ void nodePauseBlocking() {
   bool redState = true;
 
   stopMotors();
-  Serial.println("STATE:PAUSE");
+  Serial.println(F("STATE:PAUSE"));
 
   while (millis() - start < (unsigned long)nodePauseMs) {
     readBluetooth();
@@ -1174,7 +1174,7 @@ void lineTraceMode() {
     routeRunning = false;
     stopMotors();
     setLedWhite();
-    Serial.println("STATE:FINISHED");
+    Serial.println(F("STATE:FINISHED"));
     return;
   }
 
@@ -1238,7 +1238,7 @@ void handleRouteNode() {
     routeRunning = false;
     stopMotors();
     setLedWhite();
-    Serial.println("STATE:FINISHED");
+    Serial.println(F("STATE:FINISHED"));
     return;
   }
 
@@ -1253,15 +1253,15 @@ void handleRouteNode() {
   int nodeLabel = routeIndex < routeNodeCount ? routeNodes[routeIndex] : routeIndex + 1;
   char action = routeActions[routeIndex];
 
-  Serial.print("NODE:");
+  Serial.print(F("NODE:"));
   Serial.println(nodeLabel);
-  Serial.print("IDX:");
+  Serial.print(F("IDX:"));
   Serial.print(routeIndex + 1);
   Serial.print('/');
   Serial.println(routeActionCount);
-  Serial.print("CMD:");
+  Serial.print(F("CMD:"));
   Serial.println(action);
-  Serial.println("STATE:NODE");
+  Serial.println(F("STATE:NODE"));
 
   nodePauseBlocking();
   if (!routeStillActive()) {
@@ -1269,7 +1269,7 @@ void handleRouteNode() {
   }
 
   if (action == 'X') {
-    Serial.println("STATE:FINAL_NODE");
+    Serial.println(F("STATE:FINAL_NODE"));
     if (finishExitEnabled) {
       executeFinishExitNode();
     } else {
@@ -1281,7 +1281,7 @@ void handleRouteNode() {
 
     routeFinished = true;
     routeRunning = false;
-    Serial.println("STATE:FINISHED");
+    Serial.println(F("STATE:FINISHED"));
     return;
   }
 
@@ -1306,16 +1306,16 @@ void handleRouteNode() {
     routeRunning = false;
     stopMotors();
     setLedWhite();
-    Serial.println("STATE:FINISHED");
+    Serial.println(F("STATE:FINISHED"));
   }
 }
 
 void executeStraightNode() {
-  Serial.println("STATE:STRAIGHT");
+  Serial.println(F("STATE:STRAIGHT"));
   setLedGreen();
 
   driveForwardTimed(nodeStraightForwardMs, slowSpeed);
-  Serial.println("STATE:RESUME_LINE");
+  Serial.println(F("STATE:RESUME_LINE"));
 }
 
 void executeShallowLeftTurnNode() {
@@ -1405,7 +1405,7 @@ void executeShallowRightTurnNode() {
 }
 
 void executeLeftTurnNode() {
-  Serial.println("STATE:TURN_LEFT");
+  Serial.println(F("STATE:TURN_LEFT"));
   setLedRed();
 
   driveForwardTimed(nodeTurnForwardMs, slowSpeed);
@@ -1422,7 +1422,7 @@ void executeLeftTurnNode() {
     }
     bool detectionAllowed = millis() - start > (unsigned long)minTurnBeforeDetectMs;
     if (detectionAllowed && !catchLogged) {
-      Serial.println("STATE:TURN_CATCH");
+      Serial.println(F("STATE:TURN_CATCH"));
       catchLogged = true;
     }
     pivotLeftTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
@@ -1444,11 +1444,11 @@ void executeLeftTurnNode() {
   }
 
   stopMotors();
-  Serial.println("WARN:TURN_LEFT_TIMEOUT");
+  Serial.println(F("WARN:TURN_LEFT_TIMEOUT"));
 }
 
 void executeRightTurnNode() {
-  Serial.println("STATE:TURN_RIGHT");
+  Serial.println(F("STATE:TURN_RIGHT"));
   setLedBlue();
 
   driveForwardTimed(nodeTurnForwardMs, slowSpeed);
@@ -1465,7 +1465,7 @@ void executeRightTurnNode() {
     }
     bool detectionAllowed = millis() - start > (unsigned long)minTurnBeforeDetectMs;
     if (detectionAllowed && !catchLogged) {
-      Serial.println("STATE:TURN_CATCH");
+      Serial.println(F("STATE:TURN_CATCH"));
       catchLogged = true;
     }
     pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
@@ -1487,11 +1487,11 @@ void executeRightTurnNode() {
   }
 
   stopMotors();
-  Serial.println("WARN:TURN_RIGHT_TIMEOUT");
+  Serial.println(F("WARN:TURN_RIGHT_TIMEOUT"));
 }
 
 void executeUTurnNode() {
-  Serial.println("STATE:UTURN");
+  Serial.println(F("STATE:UTURN"));
   setLedYellow();
 
   driveForwardTimed(nodeTurnForwardMs, slowSpeed);
@@ -1510,7 +1510,7 @@ void executeUTurnNode() {
     }
     bool detectionAllowed = millis() - start > (unsigned long)uTurnMinDetectMs;
     if (detectionAllowed && !catchLogged) {
-      Serial.println("STATE:TURN_CATCH");
+      Serial.println(F("STATE:TURN_CATCH"));
       catchLogged = true;
     }
     pivotRightTimedControl(detectionAllowed ? catchTurnSpeed : nodeTurnSpeed);
@@ -1532,7 +1532,7 @@ void executeUTurnNode() {
   }
 
   stopMotors();
-  Serial.println("WARN:UTURN_TIMEOUT");
+  Serial.println(F("WARN:UTURN_TIMEOUT"));
 }
 
 void executeFinishExitNode() {

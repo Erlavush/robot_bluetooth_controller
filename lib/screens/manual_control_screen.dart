@@ -324,9 +324,10 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
                           SizedBox(
                             height: 46,
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
+                                const _AppBrand(),
+                                const Spacer(),
                                 _PillButton(
                                   label: 'LED COLOR',
                                   icon: Icons.arrow_drop_down,
@@ -479,6 +480,39 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _AppBrand extends StatelessWidget {
+  const _AppBrand();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.asset(
+            'assets/images/Icon-roboteru.png',
+            width: 42,
+            height: 42,
+            fit: BoxFit.cover,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'IIS_LineTracer',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
     );
   }
 }

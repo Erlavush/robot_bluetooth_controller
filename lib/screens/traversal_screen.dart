@@ -34,7 +34,6 @@ class _TraversalScreenState extends State<TraversalScreen>
     with SingleTickerProviderStateMixin {
   static const _calibrationPrefsPrefix = 'traversal_calibration.';
   static const _calibrationCommandGap = Duration(milliseconds: 55);
-  static const _uiRefreshInterval = Duration(milliseconds: 120);
   static const Map<String, List<String>> _calibrationGroups = {
     'Drive': [
       'baseSpeed',
@@ -102,7 +101,6 @@ class _TraversalScreenState extends State<TraversalScreen>
   Timer? _sensorModeTimer;
   Timer? _telemetryWatchdogTimer;
   DateTime? _lastTelemetrySyncAt;
-  DateTime? _lastUiRefreshAt;
   int? _currentNode;
   int _lastNodeEventId = 0;
   int _lastSensorPacketEventId = 0;
@@ -217,7 +215,6 @@ class _TraversalScreenState extends State<TraversalScreen>
   void _handleBluetoothUpdate() {
     final telemetry = _bluetooth.telemetry;
     final threshold = telemetry.threshold.toDouble();
-    var needsSetState = false;
 
     if (_pendingCalibrationKeys.contains('threshold') &&
         _calibration['threshold'] == threshold) {
@@ -232,32 +229,15 @@ class _TraversalScreenState extends State<TraversalScreen>
 
     if (telemetry.state == 'FINISHED' && _running) {
       _running = false;
-      needsSetState = true;
     }
 
     if (telemetry.sensorPacketEventId != _lastSensorPacketEventId) {
       _lastSensorPacketEventId = telemetry.sensorPacketEventId;
-      if (_shouldRefreshTelemetryUi()) {
-        needsSetState = true;
-      }
-    } else {
-      needsSetState = true;
     }
 
-    if (needsSetState && mounted) {
+    if (mounted) {
       setState(() {});
     }
-  }
-
-  bool _shouldRefreshTelemetryUi() {
-    final now = DateTime.now();
-    final last = _lastUiRefreshAt;
-    if (last != null && now.difference(last) < _uiRefreshInterval) {
-      return false;
-    }
-
-    _lastUiRefreshAt = now;
-    return true;
   }
 
   void _updateRobotSlide() {
@@ -682,23 +662,22 @@ class _TraversalScreenState extends State<TraversalScreen>
         body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(18),
-            child: Column(
+            child: Row(
               children: [
-                _TraversalTopBar(
-                  bluetooth: _bluetooth,
-                  showRawSensorValues: _showRawSensorValues,
-                  onBack: _backToManual,
-                ),
-                const SizedBox(height: 12),
                 Expanded(
-                  child: Row(
+                  child: Column(
                     children: [
+                      _TraversalTopBar(
+                        bluetooth: _bluetooth,
+                        showRawSensorValues: _showRawSensorValues,
+                      ),
+                      const SizedBox(height: 10),
                       Expanded(child: _buildMapCard()),
-                      const SizedBox(width: 28),
-                      SizedBox(width: 330, child: _buildControlCard()),
                     ],
                   ),
                 ),
+                const SizedBox(width: 28),
+                SizedBox(width: 342, child: _buildControlCard()),
               ],
             ),
           ),
@@ -912,11 +891,45 @@ class _TraversalScreenState extends State<TraversalScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Center(
-                child: Text(
-                  'TRAVERSAL MODE',
-                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
-                ),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'TRAVERSAL MODE',
+                      style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 94,
+                    child: _MiniButton(
+                      label: 'MANUAL',
+                      onPressed: _backToManual,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _TelemetrySnapshot(
+                bluetooth: _bluetooth,
+                showRawSensorValues: _showRawSensorValues,
+              ),
+              const SizedBox(height: 12),
+              _PanelSection(
+                title: 'Sensor Telemetry',
+                children: [
+                  _ToggleRow(
+                    label: 'Show raw values',
+                    value: _showRawSensorValues,
+                    onChanged: _setRawSensorValuesEnabled,
+                  ),
+                  const _HintLine(
+                    text:
+                        'Telemetry packets stay enabled; this only hides numbers in the top strip.',
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               _buildRouteModeSection(),
@@ -957,20 +970,6 @@ class _TraversalScreenState extends State<TraversalScreen>
                     onPressed: _confirmAndStart,
                   ),
                   _StopButton(onPressed: _stopTraversal),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _PanelSection(
-                title: 'Sensor Telemetry',
-                children: [
-                  _ToggleRow(
-                    label: 'Show raw values',
-                    value: _showRawSensorValues,
-                    onChanged: _setRawSensorValuesEnabled,
-                  ),
-                  const _HintLine(
-                    text: 'Off hides numbers only; raw packets stay enabled.',
-                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -1020,84 +1019,126 @@ class _TraversalScreenState extends State<TraversalScreen>
   }
 }
 
-class _TraversalTopBar extends StatelessWidget {
-  const _TraversalTopBar({
+class _TelemetrySnapshot extends StatelessWidget {
+  const _TelemetrySnapshot({
     required this.bluetooth,
     required this.showRawSensorValues,
-    required this.onBack,
   });
 
   final RobotBluetoothService bluetooth;
   final bool showRawSensorValues;
-  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final telemetry = bluetooth.telemetry;
+    final lastPacketAt = telemetry.lastSensorPacketAt;
+    final age = lastPacketAt == null
+        ? null
+        : DateTime.now().difference(lastPacketAt);
+    final live = age != null && age < const Duration(milliseconds: 900);
+    final ageLabel = age == null
+        ? 'No packet'
+        : age.inMilliseconds < 1000
+        ? '${age.inMilliseconds} ms ago'
+        : '${age.inSeconds} s ago';
+    final rawValues = telemetry.hasRawValues
+        ? telemetry.rawD8ToD1.join(', ')
+        : 'Waiting for RAW packet';
+
+    return _PanelSection(
+      title: 'Live Sensor RX',
+      children: [
+        Row(
+          children: [
+            _StatusBadge(label: live ? 'LIVE' : 'WAIT', live: live),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                ageLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+        _KeyValue(label: 'Bits D8-D1', value: telemetry.bitsD8ToD1.join()),
+        _KeyValue(label: 'Black count', value: '${telemetry.blackCount}'),
+        _KeyValue(label: 'Threshold', value: '${telemetry.threshold}'),
+        _KeyValue(
+          label: 'Position',
+          value: telemetry.position.toStringAsFixed(2),
+        ),
+        _KeyValue(
+          label: showRawSensorValues ? 'Raw D8-D1' : 'Raw D8-D1 hidden',
+          value: showRawSensorValues ? rawValues : 'Tap Show raw values',
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.label, required this.live});
+
+  final String label;
+  final bool live;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = live ? const Color(0xFF10C772) : const Color(0xFFFFC400);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _TraversalTopBar extends StatelessWidget {
+  const _TraversalTopBar({
+    required this.bluetooth,
+    required this.showRawSensorValues,
+  });
+
+  final RobotBluetoothService bluetooth;
+  final bool showRawSensorValues;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 74,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: Colors.black,
-        border: Border.all(color: const Color(0xFFCFCFCF), width: 4),
-        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFCFCFCF), width: 3),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: const [BoxShadow(color: Color(0xFF151515), spreadRadius: 2)],
       ),
       child: Row(
         children: [
-          SizedBox(
-            width: 176,
-            child: InkWell(
-              onTap: onBack,
-              borderRadius: BorderRadius.circular(18),
-              child: const Row(
-                children: [
-                  Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 24),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Back to\nManual Mode',
-                      maxLines: 2,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        height: 1.05,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
           Expanded(
             child: _SensorStrip(
               bluetooth: bluetooth,
               showRawSensorValues: showRawSensorValues,
             ),
           ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 116,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  bluetooth.isConnected ? 'CONNECTED' : 'DISCONNECTED',
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                _BluetoothPill(connected: bluetooth.isConnected),
-              ],
-            ),
-          ),
+          const SizedBox(width: 8),
+          _BluetoothPill(connected: bluetooth.isConnected),
         ],
       ),
     );
@@ -1126,7 +1167,7 @@ class _SensorStrip extends StatelessWidget {
         for (var i = 0; i < labels.length; i++)
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -1134,19 +1175,25 @@ class _SensorStrip extends StatelessWidget {
                     labels[i],
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 13,
+                      fontSize: 10,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Container(
-                    height: 28,
+                    height: 24,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: bits[i] == 1
                           ? const Color(0xFFFF3131)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(9),
+                          : const Color(0xFF18181B),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(
+                        color: bits[i] == 1
+                            ? Colors.white
+                            : const Color(0xFF4A4A4A),
+                        width: 1,
+                      ),
                     ),
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
@@ -1159,7 +1206,7 @@ class _SensorStrip extends StatelessWidget {
                         maxLines: 1,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 11,
+                          fontSize: 9,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -1183,7 +1230,7 @@ class _BluetoothPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = connected ? const Color(0xFF10C772) : const Color(0xFFFF3131);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: connected ? color : Colors.white,
         borderRadius: BorderRadius.circular(999),
@@ -1195,19 +1242,17 @@ class _BluetoothPill extends StatelessWidget {
           Icon(
             Icons.bluetooth,
             color: connected ? Colors.white : color,
-            size: 18,
+            size: 15,
           ),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              'HC-05',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: connected ? Colors.white : color,
-                fontWeight: FontWeight.w900,
-                fontSize: 13,
-              ),
+          const SizedBox(width: 4),
+          Text(
+            'HC-05',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: connected ? Colors.white : color,
+              fontWeight: FontWeight.w900,
+              fontSize: 11,
             ),
           ),
         ],
@@ -1588,6 +1633,194 @@ class _CalibrationPanel extends StatelessWidget {
   }
 }
 
+class _CalibrationInfo {
+  const _CalibrationInfo({
+    required this.purpose,
+    required this.tooLow,
+    required this.tooHigh,
+    required this.tuneWhen,
+  });
+
+  final String purpose;
+  final String tooLow;
+  final String tooHigh;
+  final String tuneWhen;
+}
+
+const Map<String, _CalibrationInfo> _calibrationInfo = {
+  'threshold': _CalibrationInfo(
+    purpose: 'Analog cutoff that converts each sensor into black or white.',
+    tooLow: 'White floor may be counted as black, causing false nodes.',
+    tooHigh: 'The robot may miss the line or black node blocks.',
+    tuneWhen:
+        'Tune first. A 3 cm line should read about 3-4 black sensors; a node should read 6-8.',
+  ),
+  'baseSpeed': _CalibrationInfo(
+    purpose: 'Normal forward speed while following a line between nodes.',
+    tooLow: 'Traversal becomes slow and may stall on weak batteries.',
+    tooHigh: 'The robot may wobble, overshoot nodes, or enter turns too fast.',
+    tuneWhen:
+        'Tune after sensors are correct. Lower it while proving the shortest route.',
+  ),
+  'turnSpeed': _CalibrationInfo(
+    purpose: 'Blind pivot speed for normal left/right turns.',
+    tooLow: 'The robot may fail to rotate enough or stall during turns.',
+    tooHigh: 'The robot may overshoot the outgoing line before catch phase.',
+    tuneWhen:
+        'Tune normal turns at nodes 2, 4, 16, 17, and the finish turn at 21.',
+  ),
+  'shallowTurnSpeed': _CalibrationInfo(
+    purpose:
+        'Blind pivot speed for shallow Q/E turns at diagonal/Y intersections.',
+    tooLow: 'The robot may barely leave the node direction.',
+    tooHigh: 'A shallow turn can behave like a 90-degree turn and overshoot.',
+    tuneWhen: 'Tune the E turns at nodes 5 and 10 on the shortest route.',
+  ),
+  'catchTurnSpeed': _CalibrationInfo(
+    purpose:
+        'Slow pivot speed after blind turn time while searching for the outgoing line.',
+    tooLow: 'The robot may catch very slowly or not reach the line.',
+    tooHigh:
+        'The robot may pass over the outgoing line before it becomes stable.',
+    tuneWhen:
+        'Tune when turns are close but inconsistent after the blind phase.',
+  ),
+  'slowSpeed': _CalibrationInfo(
+    purpose:
+        'Careful forward speed during node handling and blind forward movement.',
+    tooLow: 'The robot may stall while crossing a node block.',
+    tooHigh: 'The robot may travel too far before turning or stopping.',
+    tuneWhen: 'Tune together with Node FWD and Final FWD.',
+  ),
+  'manualCurve': _CalibrationInfo(
+    purpose: 'Manual-mode curve strength for diagonal button movement.',
+    tooLow: 'Manual diagonal movement feels almost straight.',
+    tooHigh: 'Manual diagonal movement turns too sharply.',
+    tuneWhen: 'Only affects manual driving, not autonomous traversal.',
+  ),
+  'kp': _CalibrationInfo(
+    purpose: 'Line-following correction strength.',
+    tooLow: 'The robot drifts slowly away from the line.',
+    tooHigh: 'The robot zigzags aggressively on straight tracks.',
+    tuneWhen: 'Tune after Threshold and motor trims are reasonable.',
+  ),
+  'nodePause': _CalibrationInfo(
+    purpose: 'Pause after detecting a node before executing the route command.',
+    tooLow: 'Harder to observe logs and debug node detections.',
+    tooHigh: 'Traversal becomes slow at every node.',
+    tuneWhen: 'Keep higher during testing; reduce for final demo if needed.',
+  ),
+  'nodeCooldown': _CalibrationInfo(
+    purpose: 'Minimum time before another node can be counted.',
+    tooLow: 'One 10 cm black block can be counted twice.',
+    tooHigh: 'Short edges may cause the next node to be ignored.',
+    tuneWhen: 'Tune if logs show duplicate NODE events or missed close nodes.',
+  ),
+  'nodeForward': _CalibrationInfo(
+    purpose: 'Blind forward movement after detecting a node before turning.',
+    tooLow:
+        'The robot turns too early while its rotation center is not inside the node.',
+    tooHigh: 'The robot drives past the node center before turning.',
+    tuneWhen:
+        'Tune before turn speeds. It affects every turn on the shortest route.',
+  ),
+  'turnTimeout': _CalibrationInfo(
+    purpose: 'Maximum time allowed for a turn before timeout.',
+    tooLow: 'Valid turns may stop with timeout warnings.',
+    tooHigh: 'A bad turn can spin for too long before stopping.',
+    tuneWhen:
+        'Raise only if turn tuning is otherwise correct but timeouts still occur.',
+  ),
+  'minTurn': _CalibrationInfo(
+    purpose: 'Blind time before normal turns are allowed to catch a line.',
+    tooLow: 'The robot may accept the black node itself as the outgoing line.',
+    tooHigh: 'The robot may rotate past the outgoing line before catch starts.',
+    tuneWhen:
+        'Tune normal 90-degree turns at nodes 2, 4, 16, 17, and finish 21.',
+  ),
+  'shallowMinTurn': _CalibrationInfo(
+    purpose: 'Blind time before shallow Q/E turns are allowed to catch a line.',
+    tooLow: 'The robot may catch while still on the black node block.',
+    tooHigh: 'The robot may overshoot the shallow diagonal exit.',
+    tuneWhen: 'Tune specifically for nodes 5 and 10 on the shortest route.',
+  ),
+  'afterTurn': _CalibrationInfo(
+    purpose: 'Forward movement after catching the outgoing line.',
+    tooLow:
+        'The robot may redetect the same node or hesitate at the node edge.',
+    tooHigh: 'The robot may drive too far before line following stabilizes.',
+    tuneWhen: 'Tune after turns catch correctly but exit from nodes is messy.',
+  ),
+  'finalForward': _CalibrationInfo(
+    purpose:
+        'Extra forward movement before stopping at final node or finish line.',
+    tooLow:
+        'The robot may stop too early on node 21 or before the finish line.',
+    tooHigh: 'The robot may pass too far beyond the finish line.',
+    tuneWhen: 'Tune last, after the node 21 finish-exit turn works.',
+  ),
+  'minPwm': _CalibrationInfo(
+    purpose: 'Minimum PWM applied to drive motors.',
+    tooLow: 'Motors may hum or stall instead of moving.',
+    tooHigh: 'Small corrections become jumpy.',
+    tuneWhen: 'Tune if low-speed movement is unreliable.',
+  ),
+  'minPivot': _CalibrationInfo(
+    purpose: 'Minimum PWM applied during pivot turns.',
+    tooLow: 'Turns may stall or fail on carpet/low battery.',
+    tooHigh: 'Turns become too sudden even with low turn speeds.',
+    tuneWhen:
+        'Tune if changing Turn SPD or Catch Turn does not affect weak pivots enough.',
+  ),
+  'leftTrim': _CalibrationInfo(
+    purpose: 'Speed correction for the left motor.',
+    tooLow: 'The robot may drift one direction on straight lines.',
+    tooHigh: 'The robot may drift the opposite direction.',
+    tuneWhen:
+        'Tune with Right Trim after verifying both motors are wired correctly.',
+  ),
+  'rightTrim': _CalibrationInfo(
+    purpose: 'Speed correction for the right motor.',
+    tooLow: 'The robot may drift one direction on straight lines.',
+    tooHigh: 'The robot may drift the opposite direction.',
+    tuneWhen:
+        'Tune with Left Trim after verifying both motors are wired correctly.',
+  ),
+  'nodeBlackMin': _CalibrationInfo(
+    purpose:
+        'Minimum black sensor count required to detect a 10 cm node block.',
+    tooLow: 'A wide line or messy edge can be mistaken as a node.',
+    tooHigh: 'Real nodes may be missed if not all sensors read black.',
+    tuneWhen: 'Use telemetry on a node. Start at 6; try 5 if nodes are missed.',
+  ),
+  'lineBlackMax': _CalibrationInfo(
+    purpose: 'Maximum black count accepted as a normal line during turn catch.',
+    tooLow: 'The robot may rotate past the line and never catch it.',
+    tooHigh: 'The robot may accept the full black node as the outgoing line.',
+    tuneWhen: 'Tune if turns catch too early while still inside a node block.',
+  ),
+  'stableMs': _CalibrationInfo(
+    purpose:
+        'How long the outgoing line must stay centered before a turn is accepted.',
+    tooLow: 'Noisy sensor flashes can be accepted as a real line.',
+    tooHigh: 'The robot may see the line but keep rotating past it.',
+    tuneWhen: 'Tune after Min Turn and Catch Turn are close.',
+  ),
+  'lostMs': _CalibrationInfo(
+    purpose: 'How long a node candidate must persist before being confirmed.',
+    tooLow: 'Sensor noise can create false node detections.',
+    tooHigh: 'Fast movement may cross a node before it confirms.',
+    tuneWhen: 'Tune if node logs are noisy or delayed.',
+  ),
+  'telemetryMs': _CalibrationInfo(
+    purpose: 'Interval for sensor telemetry packets in traversal mode.',
+    tooLow: 'Bluetooth/log traffic can become heavy.',
+    tooHigh: 'Sensor UI updates slowly while tuning.',
+    tuneWhen:
+        'Use faster telemetry while tuning, slower telemetry for smoother driving.',
+  ),
+};
+
 class _CalibrationRow extends StatelessWidget {
   const _CalibrationRow({
     required this.item,
@@ -1607,6 +1840,7 @@ class _CalibrationRow extends StatelessWidget {
         .toInt();
     final fineStep = item.step;
     final coarseStep = _coarseStepFor(item);
+    final info = _calibrationInfo[item.key];
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
@@ -1625,6 +1859,20 @@ class _CalibrationRow extends StatelessWidget {
                   ),
                 ),
               ),
+              if (info != null)
+                SizedBox(
+                  width: 30,
+                  height: 30,
+                  child: IconButton(
+                    tooltip: '${item.label} info',
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    color: const Color(0xFF33D2D2),
+                    onPressed: () => _showCalibrationInfo(context, info),
+                    icon: const Icon(Icons.info_outline),
+                  ),
+                ),
+              const SizedBox(width: 4),
               Container(
                 width: 72,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -1697,6 +1945,45 @@ class _CalibrationRow extends StatelessWidget {
     );
   }
 
+  void _showCalibrationInfo(BuildContext context, _CalibrationInfo info) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF101014),
+          title: Text(
+            item.label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _InfoBlock(label: 'Controls', text: info.purpose),
+                _InfoBlock(label: 'Too low', text: info.tooLow),
+                _InfoBlock(label: 'Too high', text: info.tooHigh),
+                _InfoBlock(label: 'Tune when', text: info.tuneWhen),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'OK',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   double _coarseStepFor(CalibrationItem item) {
     if (item.key == 'kp') {
       return 1;
@@ -1715,6 +2002,43 @@ class _CalibrationRow extends StatelessWidget {
       return value.round().toString();
     }
     return value.toStringAsFixed(1);
+  }
+}
+
+class _InfoBlock extends StatelessWidget {
+  const _InfoBlock({required this.label, required this.text});
+
+  final String label;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: const TextStyle(
+              color: Color(0xFF33D2D2),
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              height: 1.28,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

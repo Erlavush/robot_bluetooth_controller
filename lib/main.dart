@@ -62,7 +62,7 @@ class _RobotControllerAppState extends State<RobotControllerApp>
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Robot Controller',
+      title: 'IIS_LineTracer',
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: 'Quicksand',

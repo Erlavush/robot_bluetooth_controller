@@ -67,6 +67,8 @@ flutter:
         - asset: assets/fonts/FiraCode-Regular.ttf
         - asset: assets/fonts/FiraCode-SemiBold.ttf
           weight: 600
+  assets:
+    - assets/images/Icon-roboteru.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
